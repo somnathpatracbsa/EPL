@@ -1,12 +1,12 @@
-name: Sync & Score EPL Predictions
+name: Weekly Squad Sync
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '0 5 * * 1' # Every Monday 05:00 UTC — squads barely change, no need to run this often
   workflow_dispatch: {}
 
 jobs:
-  sync:
+  squad-sync:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -21,9 +21,9 @@ jobs:
         working-directory: automation
         run: npm install
 
-      - name: Run sync and scoring
+      - name: Run squad sync
         working-directory: automation
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-        run: node sync-and-score.js
+        run: node squad-sync.js

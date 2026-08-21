@@ -3,40 +3,69 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>The Boot Room — EPL Prediction League</title>
+<title>PL Fan Warzone — Prediction Gameroom</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
 
-  <div id="ticker" class="ticker"><div class="ticker-track" id="tickerTrack">Loading fixtures…</div></div>
+   <div id="ticker" class="ticker"><div class="ticker-track" id="tickerTrack">⚽ Loading fixtures…</div></div>
 
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark">⚽</span>
-      <span class="brand-name">The Boot Room</span>
+      <span class="brand-mark">⚔️</span>
+      <span class="brand-name">PL Fan Warzone</span>
+      <span class="brand-sub">Prediction Gameroom</span>
     </div>
-    <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="predict">Predict</button>
-      <button class="tab" data-tab="table">Table Predictor</button>
-      <button class="tab" data-tab="leaderboard">Leaderboard</button>
-      <button class="tab" data-tab="badges">Badges</button>
-    </nav>
     <div class="auth-area" id="authArea">
       <button id="signInBtn" class="btn btn-primary">Sign in with Google</button>
     </div>
   </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="predict">🎯 Gameweek Predictions</button>
+    <button class="tab" data-tab="table">📋 Table Predictor</button>
+    <button class="tab" data-tab="allTables">🗂️ All Table Picks</button>
+    <button class="tab" data-tab="community">🗣️ Community Predictions</button>
+    <button class="tab" data-tab="leaderboard">🏆 Leaderboard</button>
+    <button class="tab" data-tab="awards">🎖️ Season Awards</button>
+    <button class="tab" data-tab="players">👕 Player Profiles</button>
+    <button class="tab" data-tab="highlights">🔥 Highlights</button>
+    <button class="tab" data-tab="badges">🥇 Badges</button>
+    <button class="tab" data-tab="profile">👤 My Profile</button>
+  </nav>
 
   <main id="app">
 
     <section id="predict" class="panel active">
       <div class="panel-head">
         <h1>Gameweek <span id="gwNumber">—</span> Predictions</h1>
-        <p class="sub">Lock in your scorelines before kickoff. Once a match starts, it's locked forever.</p>
+        <p class="sub">Lock in your scorelines before kickoff. Once a match starts, it's locked forever. Save a prediction to unlock the crowd's take on that match.</p>
       </div>
       <div id="fixtureList" class="fixture-list">
         <p class="empty-state">Sign in to see this gameweek's fixtures.</p>
+      </div>
+
+      <div class="gw-extras" id="gwExtras" style="display:none;">
+        <h2 class="section-title">⚡ Gameweek Extras</h2>
+        <p class="sub">Team predictions here are auto-scored. Player picks are for bragging rights — free-text guesses, judged on the honour system since detailed player stats aren't in the free data feed.</p>
+        <div class="extras-grid">
+          <label>Highest scoring team this gameweek
+            <select id="topScoringTeam"></select>
+          </label>
+          <label>A team that keeps a clean sheet
+            <select id="cleanSheetTeam"></select>
+          </label>
+          <label>Top scoring player this gameweek <span class="tag-manual">manual</span>
+            <input type="text" id="topScoringPlayer" placeholder="e.g. Erling Haaland" />
+          </label>
+          <label>A goalkeeper who keeps a clean sheet <span class="tag-manual">manual</span>
+            <input type="text" id="cleanSheetPlayer" placeholder="e.g. Alisson" />
+          </label>
+        </div>
+        <button id="saveExtrasBtn" class="btn btn-primary">Save Gameweek Extras</button>
+        <span id="extrasStatus" class="pred-status"></span>
       </div>
     </section>
 
@@ -45,8 +74,29 @@
         <h1>Predict the Final Table</h1>
         <p class="sub">Drag teams into the order you think they'll finish. Scored at mid-season and at the final whistle.</p>
       </div>
+      <div id="tableLockBanner" class="lock-banner" style="display:none;"></div>
+      <div id="adminLockControls" class="admin-controls" style="display:none;">
+        <button id="lockTableBtn" class="btn btn-secondary">🔒 Lock predictions for everyone</button>
+        <button id="unlockTableBtn" class="btn btn-secondary">🔓 Unlock predictions</button>
+      </div>
       <ol id="tableList" class="table-list"></ol>
       <button id="saveTableBtn" class="btn btn-primary">Save My Table</button>
+    </section>
+
+    <section id="allTables" class="panel">
+      <div class="panel-head">
+        <h1>Everyone's Table Picks</h1>
+        <p class="sub">See how the whole group thinks the season plays out.</p>
+      </div>
+      <div id="allTablesGrid" class="all-tables-grid"></div>
+    </section>
+
+    <section id="community" class="panel">
+      <div class="panel-head">
+        <h1>Community Predictions — Gameweek <span id="gwNumberCommunity">—</span></h1>
+        <p class="sub">Every scoreline, from everyone, for this gameweek's matches.</p>
+      </div>
+      <div id="communityGrid" class="community-grid"></div>
     </section>
 
     <section id="leaderboard" class="panel">
@@ -56,10 +106,56 @@
       </div>
       <table class="leaderboard-table">
         <thead>
-          <tr><th>Rank</th><th>Player</th><th>Match Pts</th><th>Table Pts</th><th>Streak</th><th>Total</th></tr>
+          <tr><th>Rank</th><th>Player</th><th>Match Pts</th><th>Table Pts</th><th>Extras Pts</th><th>Streak</th><th>Total</th></tr>
         </thead>
         <tbody id="leaderboardBody"></tbody>
       </table>
+    </section>
+
+    <section id="awards" class="panel">
+      <div class="panel-head">
+        <h1>Season Awards Predictions</h1>
+        <p class="sub">Bragging-rights category — free-text picks, judged manually at season end since red cards / detailed stats need a paid data feed.</p>
+      </div>
+      <div class="extras-grid">
+        <label>Golden Boot (top scorer)
+          <input type="text" id="awardGoldenBoot" placeholder="Player name" />
+        </label>
+        <label>Golden Glove (most clean sheets, keeper)
+          <input type="text" id="awardGoldenGlove" placeholder="Player name" />
+        </label>
+        <label>Manager of the Year
+          <input type="text" id="awardManager" placeholder="Manager name" />
+        </label>
+        <label>Most Red Cards (player)
+          <input type="text" id="awardRedCards" placeholder="Player name" />
+        </label>
+        <label>Most Clean Sheets (team)
+          <select id="awardCleanSheetTeam"></select>
+        </label>
+      </div>
+      <button id="saveAwardsBtn" class="btn btn-primary">Save My Predictions</button>
+      <span id="awardsStatus" class="pred-status"></span>
+
+      <h2 class="section-title" style="margin-top:32px;">What everyone else picked</h2>
+      <div id="awardsCommunity" class="awards-community"></div>
+    </section>
+
+    <section id="players" class="panel">
+      <div class="panel-head">
+        <h1>Player Profiles</h1>
+        <p class="sub">This season's squads, synced weekly.</p>
+      </div>
+      <input type="text" id="playerSearch" class="player-search" placeholder="Search by name or team…" />
+      <div id="playersGrid" class="players-grid"></div>
+    </section>
+
+    <section id="highlights" class="panel">
+      <div class="panel-head">
+        <h1>Highlights</h1>
+        <p class="sub">Auto-generated stat highlights from the group's predictions and results each gameweek.</p>
+      </div>
+      <div id="highlightsList" class="highlights-list"></div>
     </section>
 
     <section id="badges" class="panel">
@@ -70,7 +166,21 @@
       <div id="badgeGrid" class="badge-grid"></div>
     </section>
 
+    <section id="profile" class="panel">
+      <div class="panel-head">
+        <h1 id="profileName">My Profile</h1>
+        <p class="sub">Your full prediction and result history, all in one place.</p>
+      </div>
+      <div id="profileStats" class="profile-stats"></div>
+      <h2 class="section-title">Match-by-match history</h2>
+      <div id="profileHistory" class="profile-history">
+        <p class="empty-state">Sign in to see your history.</p>
+      </div>
+    </section>
+
   </main>
+
+  <div id="celebrate" class="celebrate"></div>
 
   <footer class="footer">
     <p>Scores sync automatically every few hours. No admin required.</p>

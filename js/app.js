@@ -1,10 +1,10 @@
-import { firebaseConfig } from './firebase-config.js';
+import { firebaseConfig, ADMIN_EMAIL } from './firebase-config.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, collection, getDocs, query, orderBy, serverTimestamp
+  getFirestore, doc, getDoc, setDoc, collection, getDocs, query, where, orderBy, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app = initializeApp(firebaseConfig);
@@ -13,6 +13,21 @@ const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
 let currentUser = null;
+let currentGW = null;
+let usersCache = null; // uid -> {displayName, email}
+
+const PL_TEAMS_DEFAULT = [
+  "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton", "Chelsea",
+  "Coventry City", "Crystal Palace", "Everton", "Fulham", "Hull City", "Ipswich Town",
+  "Leeds United", "Liverpool", "Manchester City", "Manchester United", "Newcastle United",
+  "Nottingham Forest", "Sunderland", "Tottenham Hotspur"
+]; // 2026-27 season — confirmed promoted: Coventry, Ipswich, Hull. Relegated: West Ham, Burnley, Wolves
+
+
+const BADGE_ICONS = {
+  'Oracle of the Week': '🔮', 'Perfect Predictor': '🎯', 'Giant Killer': '⚡',
+  'Iron Streak': '🔥', 'Table Topper': '👑'
+};
 
 // ---------- Tabs ----------
 document.getElementById('tabs').addEventListener('click', (e) => {
@@ -22,7 +37,23 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById(btn.dataset.tab).classList.add('active');
+
+  // Lazy-load panels that don't need to refresh constantly
+  if (btn.dataset.tab === 'allTables') loadAllTables();
+  if (btn.dataset.tab === 'community') loadCommunity();
+  if (btn.dataset.tab === 'players') loadPlayers();
+  if (btn.dataset.tab === 'highlights') loadHighlights();
+  if (btn.dataset.tab === 'awards') loadAwardsCommunity();
+  if (btn.dataset.tab === 'profile') loadProfile();
 });
+
+// ---------- Fun UI: celebration flash ----------
+function celebrate(message) {
+  const el = document.getElementById('celebrate');
+  el.textContent = message;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1800);
+}
 
 // ---------- Auth ----------
 document.getElementById('signInBtn').addEventListener('click', () => {
@@ -34,17 +65,20 @@ onAuthStateChanged(auth, async (user) => {
   const authArea = document.getElementById('authArea');
   if (user) {
     authArea.innerHTML = `
-      <span style="margin-right:12px; font-size:14px;">${user.displayName}</span>
+      <span style="margin-right:12px; font-size:14px;">${user.displayName}${user.email === ADMIN_EMAIL ? ' <span style="color:var(--amber); font-family:var(--font-mono); font-size:10px;">ADMIN</span>' : ''}</span>
       <button id="signOutBtn" class="btn btn-secondary">Sign out</button>
     `;
     document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
     await ensureUserDoc(user);
-    loadFixtures();
-    loadTablePredictor();
+    document.getElementById('adminLockControls').style.display = (user.email === ADMIN_EMAIL) ? 'flex' : 'none';
+    await loadConfig();
+    await loadFixtures();
+    await loadTablePredictor();
   } else {
     authArea.innerHTML = `<button id="signInBtn" class="btn btn-primary">Sign in with Google</button>`;
     document.getElementById('signInBtn').addEventListener('click', () => signInWithPopup(auth, provider));
     document.getElementById('fixtureList').innerHTML = `<p class="empty-state">Sign in to see this gameweek's fixtures.</p>`;
+    document.getElementById('adminLockControls').style.display = 'none';
   }
   loadLeaderboard();
   loadBadges();
@@ -54,39 +88,57 @@ async function ensureUserDoc(user) {
   const ref = doc(db, 'users', user.uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    await setDoc(ref, {
-      email: user.email,
-      displayName: user.displayName,
-      joinedAt: serverTimestamp()
-    });
+    await setDoc(ref, { email: user.email, displayName: user.displayName, joinedAt: serverTimestamp() });
   }
+}
+
+async function getUsersMap() {
+  if (usersCache) return usersCache;
+  const snap = await getDocs(collection(db, 'users'));
+  usersCache = {};
+  snap.forEach(d => { usersCache[d.id] = d.data(); });
+  return usersCache;
+}
+
+async function loadConfig() {
+  const snap = await getDoc(doc(db, 'config', 'current'));
+  const cfg = snap.exists() ? snap.data() : { currentGameweek: 1, tableLocked: false };
+  currentGW = cfg.currentGameweek;
+  document.getElementById('gwNumber').textContent = currentGW;
+  document.getElementById('gwNumberCommunity').textContent = currentGW;
+
+  const banner = document.getElementById('tableLockBanner');
+  if (cfg.tableLocked) {
+    banner.style.display = 'block';
+    banner.textContent = '🔒 Table predictions are currently locked by the admin.';
+  } else {
+    banner.style.display = 'none';
+  }
+  return cfg;
 }
 
 // ---------- Predict tab ----------
 async function loadFixtures() {
-  const configSnap = await getDoc(doc(db, 'config', 'current'));
-  const cfg = configSnap.exists() ? configSnap.data() : { currentGameweek: 1 };
-  document.getElementById('gwNumber').textContent = cfg.currentGameweek;
-
+  const cfg = await loadConfig();
   const fixturesSnap = await getDocs(collection(db, 'fixtures'));
   const fixtures = fixturesSnap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(f => f.gameweek === cfg.currentGameweek)
     .sort((a, b) => new Date(a.kickoffUTC) - new Date(b.kickoffUTC));
 
-  // Update ticker with all fixtures this gameweek
-  const tickerText = fixtures.map(f => `${f.homeTeam} vs ${f.awayTeam}`).join('   •   ') || 'No fixtures loaded yet — check back soon';
+  const tickerText = fixtures.map(f => `⚽ ${f.homeTeam} vs ${f.awayTeam}`).join('   •   ') || 'No fixtures loaded yet — check back soon';
   document.getElementById('tickerTrack').textContent = tickerText + '     ' + tickerText;
 
   const list = document.getElementById('fixtureList');
   if (!fixtures.length) {
     list.innerHTML = `<p class="empty-state">No fixtures for this gameweek yet. The sync job will populate them automatically.</p>`;
+    document.getElementById('gwExtras').style.display = 'none';
     return;
   }
 
   list.innerHTML = '';
   for (const fx of fixtures) {
-    const locked = new Date(fx.kickoffUTC) <= new Date() || fx.status !== 'SCHEDULED' && fx.status !== 'TIMED';
+    const locked = new Date(fx.kickoffUTC) <= new Date() || (fx.status !== 'SCHEDULED' && fx.status !== 'TIMED');
     const predRef = doc(db, 'predictions', `${currentUser.uid}_${fx.id}`);
     const predSnap = await getDoc(predRef);
     const existing = predSnap.exists() ? predSnap.data() : null;
@@ -94,17 +146,20 @@ async function loadFixtures() {
     const card = document.createElement('div');
     card.className = 'fixture-card' + (locked ? ' locked' : '');
     card.innerHTML = `
-      <div>
-        <div class="fixture-teams">${fx.homeTeam} <span style="color:var(--chalk-dim); font-weight:400;">vs</span> ${fx.awayTeam}</div>
-        <div class="fixture-kickoff">${new Date(fx.kickoffUTC).toLocaleString()} ${locked ? '· LOCKED' : ''}</div>
+      <div class="fixture-main">
+        <div>
+          <div class="fixture-teams"><span class="kit-dot" style="background:${kitColor(fx.homeTeam)}"></span>${fx.homeTeam} <span style="color:var(--chalk-dim); font-weight:400;">vs</span> ${fx.awayTeam} <span class="kit-dot" style="background:${kitColor(fx.awayTeam)}"></span></div>
+          <div class="fixture-kickoff">${matchStatusLine(fx, locked)}</div>
+        </div>
+        <div class="score-input-group">
+          <input type="number" min="0" max="20" class="score-input home-score" value="${existing ? existing.predHome : ''}" ${locked ? 'disabled' : ''} />
+          <span class="score-dash">–</span>
+          <input type="number" min="0" max="20" class="score-input away-score" value="${existing ? existing.predAway : ''}" ${locked ? 'disabled' : ''} />
+          ${locked ? '' : '<button class="btn btn-primary save-pred-btn">Save</button>'}
+          <span class="pred-status"></span>
+        </div>
       </div>
-      <div class="score-input-group">
-        <input type="number" min="0" max="20" class="score-input home-score" value="${existing ? existing.predHome : ''}" ${locked ? 'disabled' : ''} />
-        <span class="score-dash">–</span>
-        <input type="number" min="0" max="20" class="score-input away-score" value="${existing ? existing.predAway : ''}" ${locked ? 'disabled' : ''} />
-        ${locked ? '' : '<button class="btn btn-primary save-pred-btn">Save</button>'}
-        <span class="pred-status"></span>
-      </div>
+      <div class="crowd-pulse" data-fixture="${fx.id}"></div>
     `;
     if (!locked) {
       const saveBtn = card.querySelector('.save-pred-btn');
@@ -113,52 +168,147 @@ async function loadFixtures() {
         const a = card.querySelector('.away-score').value;
         if (h === '' || a === '') return;
         await setDoc(predRef, {
-          uid: currentUser.uid,
-          fixtureId: fx.id,
-          predHome: Number(h),
-          predAway: Number(a),
-          scored: false,
-          points: 0,
-          submittedAt: serverTimestamp()
+          uid: currentUser.uid, fixtureId: fx.id, predHome: Number(h), predAway: Number(a),
+          scored: false, points: 0, submittedAt: serverTimestamp()
         });
         card.querySelector('.pred-status').textContent = 'Saved ✓';
+        celebrate('Prediction locked in! ⚽');
+        renderCrowdPulse(card.querySelector('.crowd-pulse'), fx, true);
       });
     }
     list.appendChild(card);
+    renderCrowdPulse(card.querySelector('.crowd-pulse'), fx, !!existing);
   }
+
+  await setupGwExtras(fixtures);
+}
+
+
+function matchStatusLine(fx, locked) {
+  if (fx.status === 'FINISHED') return `FT: ${fx.homeScore}–${fx.awayScore}`;
+  if (fx.status === 'IN_PLAY' || fx.status === 'PAUSED') return `🔴 LIVE: ${fx.homeScore ?? 0}–${fx.awayScore ?? 0} (as of last sync, updates every ~3h)`;
+  return `${new Date(fx.kickoffUTC).toLocaleString()}${locked ? ' · LOCKED' : ''}`;
+}
+
+
+
+function kitColor(teamName) {
+  // Deterministic color from team name, just for a bit of visual variety
+  const colors = ['#e64545', '#8b5cf6', '#4cbf7a', '#ffb627', '#3b82f6', '#ec4899', '#14b8a6'];
+  let hash = 0;
+  for (let i = 0; i < teamName.length; i++) hash = teamName.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
+
+async function renderCrowdPulse(container, fixture, unlocked) {
+  if (!unlocked) {
+    container.innerHTML = `<div class="crowd-locked-note">🔒 Save your own prediction to see what everyone else thinks.</div>`;
+    return;
+  }
+  const q = query(collection(db, 'predictions'), where('fixtureId', '==', fixture.id));
+  const snap = await getDocs(q);
+  if (snap.empty) {
+    container.innerHTML = `<div class="crowd-locked-note">No other predictions yet — be the first!</div>`;
+    return;
+  }
+  let home = 0, draw = 0, away = 0;
+  const scorelineCounts = {};
+  snap.forEach(d => {
+    const p = d.data();
+    if (p.predHome > p.predAway) home++;
+    else if (p.predHome < p.predAway) away++;
+    else draw++;
+    const key = `${p.predHome}-${p.predAway}`;
+    scorelineCounts[key] = (scorelineCounts[key] || 0) + 1;
+  });
+  const total = home + draw + away;
+  const pct = n => Math.round((n / total) * 100);
+  const topScorelines = Object.entries(scorelineCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+    container.innerHTML = `
+    <div class="label">Crowd predicts (${total} vote${total === 1 ? '' : 's'})</div>
+    <div class="crowd-bar">
+      ${home ? `<span class="home" style="width:${pct(home)}%"></span>` : ''}
+      ${draw ? `<span class="draw" style="width:${pct(draw)}%"></span>` : ''}
+      ${away ? `<span class="away" style="width:${pct(away)}%"></span>` : ''}
+    </div>
+    <div class="crowd-legend">
+      ${home ? `<span>🟢 ${pct(home)}% predict home win (${fixture.homeTeam})</span>` : ''}
+      ${draw ? `<span>⚪ ${pct(draw)}% predict a draw</span>` : ''}
+      ${away ? `<span>🟡 ${pct(away)}% predict away win (${fixture.awayTeam})</span>` : ''}
+    </div>
+    <div class="crowd-scorelines">Most predicted: ${topScorelines.map(([s, c]) => `${s} (${c})`).join(' · ')}</div>
+  `;
+}
+
+// ---------- Gameweek extras ----------
+async function setupGwExtras(fixtures) {
+  const teams = [...new Set(fixtures.flatMap(f => [f.homeTeam, f.awayTeam]))].sort();
+  const topSel = document.getElementById('topScoringTeam');
+  const csSel = document.getElementById('cleanSheetTeam');
+  [topSel, csSel].forEach(sel => { sel.innerHTML = teams.map(t => `<option value="${t}">${t}</option>`).join(''); });
+
+  const ref = doc(db, 'gwExtraPredictions', `${currentUser.uid}_${currentGW}`);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    const d = snap.data();
+    topSel.value = d.topScoringTeam || teams[0];
+    csSel.value = d.cleanSheetTeam || teams[0];
+    document.getElementById('topScoringPlayer').value = d.topScoringPlayerGuess || '';
+    document.getElementById('cleanSheetPlayer').value = d.cleanSheetPlayerGuess || '';
+  }
+  document.getElementById('gwExtras').style.display = 'block';
+
+  document.getElementById('saveExtrasBtn').onclick = async () => {
+    await setDoc(ref, {
+      uid: currentUser.uid, gameweek: currentGW,
+      topScoringTeam: topSel.value, cleanSheetTeam: csSel.value,
+      topScoringPlayerGuess: document.getElementById('topScoringPlayer').value.trim(),
+      cleanSheetPlayerGuess: document.getElementById('cleanSheetPlayer').value.trim(),
+      scored: false, points: 0, submittedAt: serverTimestamp()
+    });
+    document.getElementById('extrasStatus').textContent = 'Saved ✓';
+    celebrate('Extras locked in! 🎯');
+  };
 }
 
 // ---------- Table Predictor tab ----------
-const PL_TEAMS_DEFAULT = [
-  "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton", "Burnley",
-  "Chelsea", "Crystal Palace", "Everton", "Fulham", "Leeds United", "Liverpool",
-  "Manchester City", "Manchester United", "Newcastle United", "Nottingham Forest",
-  "Sunderland", "Tottenham Hotspur", "West Ham United", "Wolverhampton Wanderers"
-]; // Update this list each season if promoted/relegated clubs differ
-
 async function loadTablePredictor() {
+  const cfg = await loadConfig();
+  const isAdmin = currentUser.email === ADMIN_EMAIL;
+  const locked = cfg.tableLocked && !isAdmin;
+
   const ref = doc(db, 'tablePredictions', currentUser.uid);
   const snap = await getDoc(ref);
-  const teams = snap.exists() && snap.data().teams ? snap.data().teams : PL_TEAMS_DEFAULT;
+  const teams = snap.exists() && snap.data().teams ? snap.data().teams.map(t => t.team) : PL_TEAMS_DEFAULT;
 
   const listEl = document.getElementById('tableList');
   listEl.innerHTML = '';
   teams.forEach((team, i) => {
     const li = document.createElement('li');
-    li.draggable = true;
+    li.draggable = !locked;
     li.dataset.team = team;
-    li.innerHTML = `<span class="pos">${i + 1}</span> ${team}`;
+    li.innerHTML = `<span class="pos">${i + 1}</span> <span class="kit-dot" style="background:${kitColor(team)}"></span> ${team}`;
     listEl.appendChild(li);
   });
-  enableDragReorder(listEl);
+  if (!locked) enableDragReorder(listEl);
+  document.getElementById('saveTableBtn').style.display = locked ? 'none' : 'inline-block';
+
+  document.getElementById('lockTableBtn').onclick = async () => {
+    await setDoc(doc(db, 'config', 'current'), { tableLocked: true }, { merge: true });
+    celebrate('Table predictions locked 🔒');
+    loadTablePredictor();
+  };
+  document.getElementById('unlockTableBtn').onclick = async () => {
+    await setDoc(doc(db, 'config', 'current'), { tableLocked: false }, { merge: true });
+    celebrate('Table predictions unlocked 🔓');
+    loadTablePredictor();
+  };
 }
 
 function enableDragReorder(listEl) {
   let dragged;
-  listEl.addEventListener('dragstart', (e) => {
-    dragged = e.target;
-    e.target.classList.add('dragging');
-  });
+  listEl.addEventListener('dragstart', (e) => { dragged = e.target; e.target.classList.add('dragging'); });
   listEl.addEventListener('dragend', (e) => {
     e.target.classList.remove('dragging');
     [...listEl.children].forEach((li, i) => { li.querySelector('.pos').textContent = i + 1; });
@@ -166,8 +316,7 @@ function enableDragReorder(listEl) {
   listEl.addEventListener('dragover', (e) => {
     e.preventDefault();
     const after = getDragAfterElement(listEl, e.clientY);
-    if (after == null) listEl.appendChild(dragged);
-    else listEl.insertBefore(dragged, after);
+    if (after == null) listEl.appendChild(dragged); else listEl.insertBefore(dragged, after);
   });
 }
 function getDragAfterElement(container, y) {
@@ -184,13 +333,58 @@ document.getElementById('saveTableBtn').addEventListener('click', async () => {
   if (!currentUser) return;
   const items = [...document.getElementById('tableList').children];
   const teams = items.map((li, i) => ({ team: li.dataset.team, predictedPosition: i + 1 }));
-  await setDoc(doc(db, 'tablePredictions', currentUser.uid), {
-    uid: currentUser.uid,
-    teams,
-    submittedAt: serverTimestamp()
-  });
-  alert('Table prediction saved!');
+  await setDoc(doc(db, 'tablePredictions', currentUser.uid), { uid: currentUser.uid, teams, submittedAt: serverTimestamp() });
+  celebrate('Table prediction saved! 📋');
 });
+
+// ---------- All Table Picks tab ----------
+async function loadAllTables() {
+  const grid = document.getElementById('allTablesGrid');
+  grid.innerHTML = '<p class="empty-state">Loading…</p>';
+  const [tablesSnap, users] = await Promise.all([getDocs(collection(db, 'tablePredictions')), getUsersMap()]);
+  if (tablesSnap.empty) { grid.innerHTML = '<p class="empty-state">No table predictions submitted yet.</p>'; return; }
+  grid.innerHTML = '';
+  tablesSnap.forEach(d => {
+    const t = d.data();
+    if (!t.teams) return;
+    const name = users[d.id]?.displayName || 'Unknown player';
+    const card = document.createElement('div');
+    card.className = 'player-table-card';
+    card.innerHTML = `
+      <div class="player-name">${name}</div>
+      <div class="chip-row">${t.teams.sort((a, b) => a.predictedPosition - b.predictedPosition).map(e => `<span class="chip">${e.predictedPosition}. ${e.team}</span>`).join('')}</div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+// ---------- Community Predictions tab ----------
+async function loadCommunity() {
+  const grid = document.getElementById('communityGrid');
+  grid.innerHTML = '<p class="empty-state">Loading…</p>';
+  const cfg = await loadConfig();
+  const [fixturesSnap, predsSnap, users] = await Promise.all([
+    getDocs(collection(db, 'fixtures')), getDocs(collection(db, 'predictions')), getUsersMap()
+  ]);
+  const fixtures = fixturesSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(f => f.gameweek === cfg.currentGameweek);
+  if (!fixtures.length) { grid.innerHTML = '<p class="empty-state">No fixtures this gameweek yet.</p>'; return; }
+
+  grid.innerHTML = '';
+  fixtures.forEach(fx => {
+    const rows = predsSnap.docs
+      .map(d => d.data())
+      .filter(p => p.fixtureId === fx.id)
+      .map(p => `<tr><td>${users[p.uid]?.displayName || 'Unknown'}</td><td>${p.predHome}–${p.predAway}</td></tr>`)
+      .join('');
+    const card = document.createElement('div');
+    card.className = 'community-fixture';
+    card.innerHTML = `
+      <h3>${fx.homeTeam} vs ${fx.awayTeam}</h3>
+      <table>${rows || '<tr><td colspan="2" class="empty-state">No predictions yet</td></tr>'}</table>
+    `;
+    grid.appendChild(card);
+  });
+}
 
 // ---------- Leaderboard tab ----------
 async function loadLeaderboard() {
@@ -202,50 +396,185 @@ async function loadLeaderboard() {
     const r = d.data();
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${r.rank}</td>
-      <td>${r.displayName || r.email || d.id}</td>
-      <td>${r.matchPoints || 0}</td>
-      <td>${r.tablePoints || 0}</td>
-      <td>${r.currentStreak || 0}</td>
-      <td>${r.totalPoints || 0}</td>
+      <td>${r.rank}</td><td>${r.displayName || r.email || d.id}</td>
+      <td>${r.matchPoints || 0}</td><td>${r.tablePoints || 0}</td><td>${r.extraPoints || 0}</td>
+      <td>${r.currentStreak || 0}</td><td>${r.totalPoints || 0}</td>
     `;
     body.appendChild(tr);
   });
-  if (!snap.size) {
-    body.innerHTML = `<tr><td colspan="6" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
+  if (!snap.size) body.innerHTML = `<tr><td colspan="7" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
+}
+
+// ---------- Season Awards tab ----------
+async function setupAwardsForm() {
+  const sel = document.getElementById('awardCleanSheetTeam');
+  sel.innerHTML = PL_TEAMS_DEFAULT.map(t => `<option value="${t}">${t}</option>`).join('');
+  if (!currentUser) return;
+  const ref = doc(db, 'seasonPredictions', currentUser.uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    const d = snap.data();
+    document.getElementById('awardGoldenBoot').value = d.goldenBoot || '';
+    document.getElementById('awardGoldenGlove').value = d.goldenGlove || '';
+    document.getElementById('awardManager').value = d.managerOfYear || '';
+    document.getElementById('awardRedCards').value = d.mostRedCards || '';
+    sel.value = d.mostCleanSheetsTeam || PL_TEAMS_DEFAULT[0];
   }
+  document.getElementById('saveAwardsBtn').onclick = async () => {
+    await setDoc(ref, {
+      uid: currentUser.uid,
+      goldenBoot: document.getElementById('awardGoldenBoot').value.trim(),
+      goldenGlove: document.getElementById('awardGoldenGlove').value.trim(),
+      managerOfYear: document.getElementById('awardManager').value.trim(),
+      mostRedCards: document.getElementById('awardRedCards').value.trim(),
+      mostCleanSheetsTeam: sel.value,
+      submittedAt: serverTimestamp()
+    });
+    document.getElementById('awardsStatus').textContent = 'Saved ✓';
+    celebrate('Season picks locked in! 🎖️');
+    loadAwardsCommunity();
+  };
+}
+
+async function loadAwardsCommunity() {
+  const container = document.getElementById('awardsCommunity');
+  container.innerHTML = '<p class="empty-state">Loading…</p>';
+  const snap = await getDocs(collection(db, 'seasonPredictions'));
+  if (snap.empty) { container.innerHTML = '<p class="empty-state">No predictions submitted yet.</p>'; return; }
+
+  const categories = [
+    ['goldenBoot', '🥾 Golden Boot'], ['goldenGlove', '🧤 Golden Glove'],
+    ['managerOfYear', '📋 Manager of the Year'], ['mostRedCards', '🟥 Most Red Cards'],
+    ['mostCleanSheetsTeam', '🛡️ Most Clean Sheets (Team)']
+  ];
+  container.innerHTML = '';
+  categories.forEach(([field, label]) => {
+    const tally = {};
+    snap.forEach(d => {
+      const val = (d.data()[field] || '').trim();
+      if (!val) return;
+      tally[val] = (tally[val] || 0) + 1;
+    });
+    const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+    const div = document.createElement('div');
+    div.className = 'award-tally';
+    div.innerHTML = `<h4>${label}</h4>` + (sorted.length
+      ? sorted.map(([name, count]) => `<div class="pick-row"><span>${name}</span><span>${count} pick${count === 1 ? '' : 's'}</span></div>`).join('')
+      : '<p class="empty-state">No picks yet</p>');
+    container.appendChild(div);
+  });
+}
+
+// ---------- Player Profiles tab ----------
+let playersCache = null;
+async function loadPlayers() {
+  const grid = document.getElementById('playersGrid');
+  grid.innerHTML = '<p class="empty-state">Loading…</p>';
+  if (!playersCache) {
+    const snap = await getDocs(collection(db, 'players'));
+    playersCache = snap.docs.map(d => d.data());
+  }
+  renderPlayers(playersCache);
+  document.getElementById('playerSearch').oninput = (e) => {
+    const q = e.target.value.toLowerCase();
+    renderPlayers(playersCache.filter(p => (p.name || '').toLowerCase().includes(q) || (p.team || '').toLowerCase().includes(q)));
+  };
+}
+function renderPlayers(list) {
+  const grid = document.getElementById('playersGrid');
+  if (!list.length) { grid.innerHTML = '<p class="empty-state">No squad data synced yet — this populates from the weekly squad-sync job.</p>'; return; }
+  grid.innerHTML = list.map(p => `
+    <div class="player-card">
+      <div class="name">${p.name}${p.shirtNumber ? ` <span style="color:var(--chalk-dim); font-family:var(--font-mono); font-size:11px;">#${p.shirtNumber}</span>` : ''}</div>
+      <div class="meta">${p.team || ''}</div>
+      <div class="meta">${p.position || ''} ${p.nationality ? '· ' + p.nationality : ''}</div>
+    </div>
+  `).join('');
+}
+
+// ---------- Highlights tab ----------
+async function loadHighlights() {
+  const list = document.getElementById('highlightsList');
+  list.innerHTML = '<p class="empty-state">Loading…</p>';
+  const snap = await getDoc(doc(db, 'highlights', 'current'));
+  if (!snap.exists() || !snap.data().items?.length) {
+    list.innerHTML = '<p class="empty-state">Highlights populate automatically after each gameweek is scored.</p>';
+    return;
+  }
+  const data = snap.data();
+  list.innerHTML = data.items.map(h => `
+    <div class="highlight-item"><span class="icon">${h.icon || '⭐'}</span><span>${h.text}</span></div>
+  `).join('');
 }
 
 // ---------- Badges tab ----------
-const BADGE_ICONS = {
-  'Oracle of the Week': '🔮',
-  'Perfect Predictor': '🎯',
-  'Giant Killer': '⚡',
-  'Iron Streak': '🔥',
-  'Table Topper': '👑'
-};
-
 async function loadBadges() {
   const grid = document.getElementById('badgeGrid');
-  if (!currentUser) {
-    grid.innerHTML = `<p class="empty-state">Sign in to see your badge cabinet.</p>`;
-    return;
-  }
+  if (!currentUser) { grid.innerHTML = `<p class="empty-state">Sign in to see your badge cabinet.</p>`; return; }
   const snap = await getDoc(doc(db, 'badges', currentUser.uid));
   const badges = snap.exists() && snap.data().badges ? snap.data().badges : [];
-  grid.innerHTML = '';
-  if (!badges.length) {
-    grid.innerHTML = `<p class="empty-state">No badges yet — get predicting.</p>`;
-    return;
-  }
-  badges.forEach(b => {
-    const card = document.createElement('div');
-    card.className = 'badge-card';
-    card.innerHTML = `
+  if (!badges.length) { grid.innerHTML = `<p class="empty-state">No badges yet — get predicting.</p>`; return; }
+  grid.innerHTML = badges.map(b => `
+    <div class="badge-card">
       <div class="icon">${BADGE_ICONS[b.name] || '🏅'}</div>
       <div class="name">${b.name}</div>
       <div class="meta">${b.context || ''}</div>
-    `;
-    grid.appendChild(card);
-  });
+    </div>
+  `).join('');
 }
+
+// ---------- Profile tab ----------
+async function loadProfile() {
+  if (!currentUser) return;
+  document.getElementById('profileName').textContent = `${currentUser.displayName}'s Profile`;
+
+  const [predsSnap, fixturesSnap, lbSnap] = await Promise.all([
+    getDocs(query(collection(db, 'predictions'), where('uid', '==', currentUser.uid))),
+    getDocs(collection(db, 'fixtures')),
+    getDoc(doc(db, 'leaderboard', currentUser.uid))
+  ]);
+  const fixturesById = {};
+  fixturesSnap.forEach(d => { fixturesById[d.id] = d.data(); });
+
+  const preds = predsSnap.docs.map(d => d.data()).sort((a, b) => {
+    const fa = fixturesById[a.fixtureId], fb = fixturesById[b.fixtureId];
+    return new Date(fb?.kickoffUTC || 0) - new Date(fa?.kickoffUTC || 0);
+  });
+
+  const scoredPreds = preds.filter(p => p.scored);
+  const exactCount = scoredPreds.filter(p => p.points === 25).length;
+  const outcomeCount = scoredPreds.filter(p => p.points === 10).length;
+  const accuracy = scoredPreds.length ? Math.round(((exactCount + outcomeCount) / scoredPreds.length) * 100) : 0;
+  const lb = lbSnap.exists() ? lbSnap.data() : {};
+
+  document.getElementById('profileStats').innerHTML = `
+    <div class="profile-stat-card"><div class="value">${lb.totalPoints || 0}</div><div class="label">Total Points</div></div>
+    <div class="profile-stat-card"><div class="value">${lb.rank || '—'}</div><div class="label">Current Rank</div></div>
+    <div class="profile-stat-card"><div class="value">${exactCount}</div><div class="label">Exact Scores</div></div>
+    <div class="profile-stat-card"><div class="value">${accuracy}%</div><div class="label">Accuracy</div></div>
+    <div class="profile-stat-card"><div class="value">${lb.currentStreak || 0}</div><div class="label">Current Streak</div></div>
+  `;
+
+  const historyEl = document.getElementById('profileHistory');
+  if (!preds.length) { historyEl.innerHTML = '<p class="empty-state">No predictions yet — head to Gameweek Predictions to get started.</p>'; return; }
+  historyEl.innerHTML = preds.map(p => {
+    const fx = fixturesById[p.fixtureId];
+    if (!fx) return '';
+    let pillClass = 'pending', pillText = 'Pending';
+    if (p.scored) {
+      if (p.points === 25) { pillClass = 'exact'; pillText = 'Exact! +25'; }
+      else if (p.points === 10) { pillClass = 'outcome'; pillText = 'Outcome +10'; }
+      else { pillClass = 'miss'; pillText = 'Missed'; }
+    }
+    return `
+      <div class="history-row">
+        <span>GW${fx.gameweek} · ${fx.homeTeam} ${fx.homeScore ?? '?'}–${fx.awayScore ?? '?'} ${fx.awayTeam}</span>
+        <span style="color:var(--chalk-dim);">You said ${p.predHome}–${p.predAway}</span>
+        <span class="result-pill ${pillClass}">${pillText}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// Init forms that don't depend on gameweek fixtures
+setupAwardsForm();

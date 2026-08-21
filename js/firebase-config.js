@@ -13,3 +13,8 @@ export const firebaseConfig = {
   appId: "1:841447537982:web:d0e1694cabea366c86006f",
   measurementId: "G-PJ85E7DCTP"
 };
+
+
+// Replace with the exact Google account email that should have admin powers
+// (locking/unlocking the Table Predictor). This must match EXACTLY in firestore.rules too.
+export const ADMIN_EMAIL = "somnathpatracbsa@gmail.com";

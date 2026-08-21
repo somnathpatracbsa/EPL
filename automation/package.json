@@ -1,11 +1,11 @@
 {
   "name": "epl-prediction-league-automation",
-  "version": "1.0.0",
-  "description": "Scheduled sync + scoring job for The Boot Room prediction league",
+  "version": "2.0.0",
+  "description": "Scheduled sync + scoring jobs for PL Fan Warzone",
   "type": "module",
-  "main": "sync-and-score.js",
   "scripts": {
-    "start": "node sync-and-score.js"
+    "sync": "node sync-and-score.js",
+    "squads": "node squad-sync.js"
   },
   "dependencies": {
     "firebase-admin": "^12.1.0"

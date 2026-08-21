@@ -2,34 +2,48 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Anyone signed in can read public league data
+    // ---------- Public read-only league data (written only by the automation script) ----------
     match /fixtures/{fixtureId} {
       allow read: if true;
-      allow write: if false; // only the automation script (admin SDK) can write
+      allow write: if false;
     }
 
-    match /config/{doc} {
+    match /players/{playerId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /highlights/{docId} {
       allow read: if true;
       allow write: if false;
     }
 
     match /leaderboard/{uid} {
       allow read: if true;
-      allow write: if false; // rebuilt automatically by the automation script
+      allow write: if false;
     }
 
     match /badges/{uid} {
       allow read: if true;
-      allow write: if false; // awarded automatically by the automation script
+      allow write: if false;
     }
 
+    // ---------- Config: read by everyone, written by automation OR the admin (for table lock/unlock) ----------
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.email == 'somnathpatracbsa@gmail.com' // ⚠️ replace with your exact Google account email
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tableLocked']);
+    }
+
+    // ---------- Users ----------
     match /users/{uid} {
       allow read: if true;
       allow create, update: if request.auth != null && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['email', 'displayName', 'joinedAt']);
     }
 
-    // Users can only write their own predictions, and can never set points/scored themselves
+    // ---------- Match predictions: owner-only write, points/scored locked to false at write time ----------
     match /predictions/{predId} {
       allow read: if true;
       allow create, update: if request.auth != null
@@ -40,11 +54,32 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Users can only write their own table prediction, and can't set checkpoint points themselves
+    // ---------- Gameweek extras (top scoring team / clean sheet team / player guesses) ----------
+    match /gwExtraPredictions/{docId} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.points == 0
+        && request.resource.data.scored == false;
+      allow delete: if false;
+    }
+
+    // ---------- Table predictions: owner-only, blocked while admin has locked it, can't self-set checkpoint points ----------
     match /tablePredictions/{uid} {
       allow read: if true;
       allow create, update: if request.auth != null && request.auth.uid == uid
-        && !request.resource.data.keys().hasAny(['checkpointPoints']);
+        && !request.resource.data.keys().hasAny(['checkpointPoints'])
+        && (
+          get(/databases/$(database)/documents/config/current).data.tableLocked != true
+          || request.auth.token.email == 'somnathpatracbsa@gmail.com' // ⚠️ replace with your exact Google account email
+        );
+      allow delete: if false;
+    }
+
+    // ---------- Season award predictions (Golden Boot etc.) ----------
+    match /seasonPredictions/{uid} {
+      allow read: if true;
+      allow create, update: if request.auth != null && request.auth.uid == uid;
       allow delete: if false;
     }
   }

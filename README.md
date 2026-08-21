@@ -1,86 +1,110 @@
-# The Boot Room — EPL Prediction League
+# PL Fan Warzone — Prediction Gameroom
 
-A fully free, fully automated Premier League prediction game for you and your friends.
-No servers, no paid tiers, no manual admin work once it's running.
+A fully free, fully automated Premier League prediction game. No servers, no paid tiers,
+no manual admin work once it's running (aside from the one lock/unlock toggle you control).
 
 **Stack:** GitHub Pages (hosting) + Firebase free tier (Google Sign-In + database) + GitHub Actions (free scheduled automation)
+
+This is v2 — if you're setting this up fresh, follow this README start to finish.
+If you already had v1 running, see "Upgrading from v1" at the bottom.
+
+---
+
+## What's new in v2
+- Renamed to **PL Fan Warzone**
+- **Gameweek Extras**: predict the highest-scoring team and a clean-sheet team each gameweek (auto-scored), plus free-text player guesses (bragging rights only — see limitations below)
+- **Crowd Pulse**: after you save your own prediction for a match, see the group's win/draw/loss split and most-predicted scorelines
+- **Admin table lock**: you (the account matching `ADMIN_EMAIL`) can lock/unlock table predictions for everyone from the Table Predictor tab
+- **All Table Picks tab**: browse everyone's predicted final table
+- **Community Predictions tab**: every player's scoreline guess for the current gameweek, laid out match by match
+- **Season Awards tab**: Golden Boot / Golden Glove / Manager of the Year / Most Red Cards / Most Clean Sheets predictions, with a community tally
+- **Player Profiles tab**: this season's squads (name, position, nationality, shirt number), synced weekly
+- **Highlights tab**: auto-generated stat highlights each sync (biggest win, highest-scoring match, group leader, closest table prediction)
+- **My Profile tab**: your full prediction history with results, accuracy %, and streak
+- Mobile-responsive layout throughout
+
+## Honest limitations (free-tier data constraints)
+The free football-data.org API gives fixtures, results, standings, and squad lists — but **not** detailed match events like individual goalscorers or red/yellow cards. That means:
+- **Top scoring player / clean-sheet keeper** guesses (in Gameweek Extras) are saved and displayed, but **not auto-scored** — treat them as fun, honesty-system bragging rights, or adjudicate manually if you want them to count.
+- **Season Awards tab** (Golden Boot, Golden Glove, Manager of the Year, Most Red Cards) is the same — predictions are collected and tallied, but there's no automated "winner" check. You can settle these manually at season end by eye (the actual Golden Boot winner etc. is public knowledge by then).
+- **Player Profiles** shows squad info, not live stats (no goals/appearances/cards feed on the free tier).
+- **Highlights** are generated from data we do have (results, predictions, leaderboard, table accuracy) — not video clips or news, since that needs a different (paid) data source.
+
+Nothing here is silently faked — anything not backed by real automated data is clearly labeled `manual` in the UI.
 
 ---
 
 ## 1. Create the GitHub repo
-1. Create a new **public** GitHub repo (public repos get unlimited free GitHub Actions minutes; private repos get 2,000 free minutes/month, which is still more than enough — 8x/day × 30 days at ~1 min/run is ~240 min/month).
-2. Push everything in this folder to it, preserving the structure:
+1. Create a new **public** GitHub repo (unlimited free Actions minutes; a private repo's 2,000 free minutes/month is still plenty).
+2. Push everything in this folder, preserving structure:
    ```
    index.html
    css/style.css
    js/firebase-config.js
    js/app.js
    automation/sync-and-score.js
+   automation/squad-sync.js
    automation/package.json
    firestore.rules
    .github/workflows/sync.yml
+   .github/workflows/squad-sync.yml
    ```
-3. Go to **Settings → Pages**, set source to the `main` branch, root folder. Your site will be live at `https://yourusername.github.io/your-repo-name/`.
+3. **Settings → Pages** → Source: `main` branch, root folder.
 
 ## 2. Create a free Firebase project
-1. Go to **console.firebase.google.com** → Create a project (free "Spark" plan, no credit card needed).
+1. **console.firebase.google.com** → Create project (free "Spark" plan).
 2. **Authentication** → Sign-in method → enable **Google**.
-3. **Firestore Database** → Create database → start in production mode (we'll set real rules next).
-4. Go to **Project Settings → General → Your apps** → click the web icon `</>` → register your app → copy the `firebaseConfig` object it gives you.
-5. Paste that object into `js/firebase-config.js` in your repo, replacing the placeholder values.
-6. Go to **Firestore → Rules** and paste in the contents of `firestore.rules` from this project, then Publish. This is what stops anyone from editing their own score by hand — only the automation script (using an admin key) can write points, results, and badges.
+3. **Firestore Database** → Create database → production mode.
+   - ⚠️ Make sure you're creating **Firestore**, not **Realtime Database** — they're separate products in the sidebar with very different rules syntax. If you accidentally create a Realtime Database, you can delete it via its own page's `⋮` menu — it costs nothing to leave unused either way.
+4. **Project Settings → General → Your apps** → web icon `</>` → register → copy the `firebaseConfig` object.
+5. Paste it into `js/firebase-config.js`, keeping the `export const firebaseConfig = { ... }` wrapper intact.
+6. **Set your admin email**: still in `js/firebase-config.js`, set `ADMIN_EMAIL` to your exact Google account email. Then open `firestore.rules` and replace **both** occurrences of `'somnath@example.com'` with that same email, exactly.
+7. **Firestore → Rules** tab → paste in `firestore.rules` → Publish.
 
-**Free tier limits:** Firestore's free tier gives you 50,000 reads and 20,000 writes per day. A 15–50 person league doing this a few times a week uses a tiny fraction of that — you won't hit a paywall.
+**Free tier limits:** 50,000 reads / 20,000 writes per day — a 15–50 person league uses a tiny fraction of that.
 
-## 3. Create a Firebase service account (for the automation script)
-1. In Firebase Console → **Project Settings → Service accounts** → **Generate new private key**. This downloads a JSON file — keep it secret, never commit it to the repo.
-2. In your GitHub repo → **Settings → Secrets and variables → Actions** → **New repository secret**:
-   - Name: `FIREBASE_SERVICE_ACCOUNT`
-   - Value: paste the entire contents of that JSON file
+## 3. Firebase service account (for automation)
+1. **Project Settings → Service accounts** (a tab across the top of Settings, not the left sidebar) → **Generate new private key** → downloads a JSON file.
+2. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
+   - Name: `FIREBASE_SERVICE_ACCOUNT`, Value: the full JSON file contents
 
-## 4. Get a free football data API key
-1. Register at **football-data.org** (free tier, no credit card, 10 requests/minute — plenty for this).
-2. Copy your API token.
-3. Add it as another GitHub secret:
-   - Name: `FOOTBALL_DATA_API_KEY`
-   - Value: your token
+## 4. Free football data API key
+1. Register at **football-data.org** (free, no card).
+2. Copy your token from **My Account**.
+3. Add as a GitHub secret: `FOOTBALL_DATA_API_KEY`
 
 ## 5. Seed the initial config
-Firestore needs one starting document so the site knows what gameweek it is. In the Firebase Console → Firestore → start a collection called `config`, with a document ID `current`, containing one field:
+Firestore → start a collection `config`, document ID `current`, one field:
 ```
-currentGameweek: 1
+currentGameweek: 1   (number)
+tableLocked: false   (boolean)
 ```
-(The automation script will keep this updated automatically from here on.)
 
-## 6. Turn on the automation
-The workflow in `.github/workflows/sync.yml` is already configured to run every 3 hours automatically, for free, using GitHub Actions. Nothing to do here — just make sure the two secrets above are set. You can also trigger it manually any time from the **Actions** tab in your repo (click "Sync & Score EPL Predictions" → "Run workflow") to test it immediately after setup.
-
-That first run will:
-- Pull the full season's fixtures into Firestore
-- Set the current gameweek
-- From then on, auto-score any finished matches and rebuild the leaderboard every 3 hours
+## 6. Test the automation
+GitHub repo → **Actions** tab → **Sync & Score EPL Predictions** → **Run workflow**. A green check means fixtures populated. Also manually run **Weekly Squad Sync** once to populate Player Profiles immediately rather than waiting for Monday.
 
 ## 7. Invite your friends
-Share your GitHub Pages URL. Anyone who signs in with Google automatically gets a profile — no invite system, no manual account creation needed.
+Share your GitHub Pages URL — Google Sign-In creates their profile automatically.
 
 ---
 
-## How the automation works (no admin work, ever)
-- **Every 3 hours**, a GitHub Actions job (free, scheduled, serverless) runs `automation/sync-and-score.js`:
-  1. Pulls the latest fixtures & results from football-data.org
-  2. Scores any predictions for matches that just finished (25 pts exact score, 10 pts correct outcome)
-  3. Rebuilds the leaderboard (streaks, table points, totals, ranks)
-  4. At gameweek 19, scores everyone's final-table predictions against the actual mid-season table
-  5. Checks for and awards badges (Oracle of the Week, Perfect Predictor, Iron Streak, Table Topper)
-- The **browser app never has permission to write points, results, or badges** (enforced by `firestore.rules`) — only the automation script can, using its admin key. So there's no way for anyone (including you) to need to manually adjudicate or for a friend to fudge their own score.
+## How the admin table lock works
+- Only the Google account matching `ADMIN_EMAIL` (in `firebase-config.js`) **and** the matching email hardcoded in `firestore.rules` can toggle the lock — this is enforced server-side by Firestore rules, not just hidden in the UI, so it can't be bypassed from the browser console.
+- When locked, everyone else's Table Predictor becomes read-only (dragging disabled, Save button hidden) until you unlock it again.
+- Both places must have the *exact same* email or the admin controls will silently fail — double check for typos.
 
 ## Running the final-table scoring at season end
-The mid-season checkpoint (gameweek 19) is automatic. For the final table checkpoint, either:
-- Add a date check to `main()` in `sync-and-score.js` comparing today's date to the known EPL season-end date, or
-- Just trigger it once manually: go to Actions → run the workflow, or run `scoreTablePredictions(SCORING.FINAL_WEIGHT)` locally with your secrets set as env vars, the week the season ends.
+The mid-season checkpoint (gameweek 19) is automatic. For the final checkpoint, manually run `scoreTablePredictions(SCORING.FINAL_WEIGHT)` — easiest way is to temporarily change `MIDSEASON_GAMEWEEK` in `sync-and-score.js` to the final gameweek number for one run, or trigger it locally with your secrets set as env vars.
 
-## Customizing scoring or badges
-Everything tunable lives in the `SCORING` object at the top of `automation/sync-and-score.js` — point values, streak milestones, table-prediction weighting. Change it, commit, done — no redeploy needed since GitHub Actions always runs the latest committed version.
+## Customizing scoring, badges, or point values
+Everything tunable lives in the `SCORING` object at the top of `automation/sync-and-score.js`.
 
-## A note on the team list for Table Predictor
-`js/app.js` has a hardcoded `PL_TEAMS_DEFAULT` list for this season's 20 clubs. Update it each summer when promotion/relegation changes the league.
+---
+
+## Upgrading from v1
+If you already had the original version running:
+1. Replace all files with these new ones (same repo, same Firebase project — no need to start over).
+2. Add `ADMIN_EMAIL` to `js/firebase-config.js` and update `firestore.rules` with your email in both spots noted above, then re-publish the rules.
+3. Add `tableLocked: false` to your existing `config/current` document in Firestore (Data tab → click the document → Add field).
+4. Add the new `.github/workflows/squad-sync.yml` and run it once manually to populate Player Profiles.
+5. Push, and you're on v2.
