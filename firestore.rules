@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Anyone signed in can read public league data
+    match /fixtures/{fixtureId} {
+      allow read: if true;
+      allow write: if false; // only the automation script (admin SDK) can write
+    }
+
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /leaderboard/{uid} {
+      allow read: if true;
+      allow write: if false; // rebuilt automatically by the automation script
+    }
+
+    match /badges/{uid} {
+      allow read: if true;
+      allow write: if false; // awarded automatically by the automation script
+    }
+
+    match /users/{uid} {
+      allow read: if true;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['email', 'displayName', 'joinedAt']);
+    }
+
+    // Users can only write their own predictions, and can never set points/scored themselves
+    match /predictions/{predId} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && predId == request.auth.uid + '_' + request.resource.data.fixtureId
+        && request.resource.data.points == 0
+        && request.resource.data.scored == false;
+      allow delete: if false;
+    }
+
+    // Users can only write their own table prediction, and can't set checkpoint points themselves
+    match /tablePredictions/{uid} {
+      allow read: if true;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && !request.resource.data.keys().hasAny(['checkpointPoints']);
+      allow delete: if false;
+    }
+  }
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Boot Room — EPL Prediction League</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <div id="ticker" class="ticker"><div class="ticker-track" id="tickerTrack">Loading fixtures…</div></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">⚽</span>
+      <span class="brand-name">The Boot Room</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="predict">Predict</button>
+      <button class="tab" data-tab="table">Table Predictor</button>
+      <button class="tab" data-tab="leaderboard">Leaderboard</button>
+      <button class="tab" data-tab="badges">Badges</button>
+    </nav>
+    <div class="auth-area" id="authArea">
+      <button id="signInBtn" class="btn btn-primary">Sign in with Google</button>
+    </div>
+  </header>
+
+  <main id="app">
+
+    <section id="predict" class="panel active">
+      <div class="panel-head">
+        <h1>Gameweek <span id="gwNumber">—</span> Predictions</h1>
+        <p class="sub">Lock in your scorelines before kickoff. Once a match starts, it's locked forever.</p>
+      </div>
+      <div id="fixtureList" class="fixture-list">
+        <p class="empty-state">Sign in to see this gameweek's fixtures.</p>
+      </div>
+    </section>
+
+    <section id="table" class="panel">
+      <div class="panel-head">
+        <h1>Predict the Final Table</h1>
+        <p class="sub">Drag teams into the order you think they'll finish. Scored at mid-season and at the final whistle.</p>
+      </div>
+      <ol id="tableList" class="table-list"></ol>
+      <button id="saveTableBtn" class="btn btn-primary">Save My Table</button>
+    </section>
+
+    <section id="leaderboard" class="panel">
+      <div class="panel-head">
+        <h1>Leaderboard</h1>
+        <p class="sub">Updated automatically after every gameweek.</p>
+      </div>
+      <table class="leaderboard-table">
+        <thead>
+          <tr><th>Rank</th><th>Player</th><th>Match Pts</th><th>Table Pts</th><th>Streak</th><th>Total</th></tr>
+        </thead>
+        <tbody id="leaderboardBody"></tbody>
+      </table>
+    </section>
+
+    <section id="badges" class="panel">
+      <div class="panel-head">
+        <h1>Badge Cabinet</h1>
+        <p class="sub">Earned automatically. No favours.</p>
+      </div>
+      <div id="badgeGrid" class="badge-grid"></div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>Scores sync automatically every few hours. No admin required.</p>
+  </footer>
+
+  <script type="module" src="js/firebase-config.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
