@@ -4,10 +4,12 @@
 // by firestore.rules, not by hiding this object.
 
 export const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyC2rAc9plMiZWIuU6-IL7is_uRMkJR_Ci0",
+  authDomain: "som-epl.firebaseapp.com",
+  databaseURL: "https://som-epl-default-rtdb.firebaseio.com",
+  projectId: "som-epl",
+  storageBucket: "som-epl.firebasestorage.app",
+  messagingSenderId: "841447537982",
+  appId: "1:841447537982:web:d0e1694cabea366c86006f",
+  measurementId: "G-PJ85E7DCTP"
 };
