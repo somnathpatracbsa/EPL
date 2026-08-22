@@ -61,6 +61,14 @@ function kitColor(teamName) {
   return colors[Math.abs(hash) % colors.length];
 }
 
+function positionZoneClass(pos, total) {
+  if (pos == null || isNaN(pos) || !total) return '';
+  if (pos <= 4) return 'zone-top4';
+  if (pos >= total - 2) return 'zone-bottom3'; // last 3 places
+  if (pos === 5 || pos === 6) return 'zone-mid';
+  return '';
+}
+
 function orderTeams(teams) {
   if (!standingsOrder || !standingsOrder.length) return [...teams].sort();
   const rank = new Map(standingsOrder.map((t, i) => [t, i]));
@@ -227,12 +235,22 @@ function computeCrowdStats(predictionDocs, fixture) {
   };
 }
 
+function outcomeInfo(predHome, predAway, homeTeam, awayTeam) {
+  if (predHome > predAway) return { kind: 'home', text: `Home win (${homeTeam})`, cls: 'outcome-home' };
+  if (predHome < predAway) return { kind: 'away', text: `Away win (${awayTeam})`, cls: 'outcome-away' };
+  return { kind: 'draw', text: 'Draw', cls: 'outcome-draw' };
+}
+
 function segmentLabel(kind, pct, teamName) {
   // Longer, more descriptive labels only when there's room; shrinks down as the segment narrows
-  // so text never overflows into the next segment.
+  // so text never overflows into the next segment. On narrow (mobile) viewports, always keep it
+  // to a bare percentage — full team-name labels don't fit in mobile-width segments and were
+  // getting cut off / visually overlapping the next segment.
   if (pct <= 0) return '';
+  const isNarrowScreen = window.innerWidth < 480;
+  if (isNarrowScreen) return `${pct}%`;
   if (pct >= 32) {
-    return kind === 'draw' ? `Draw ${pct}%` : `${kind === 'home' ? 'Home' : 'Away'} (${teamName}) win ${pct}%`;
+    return kind === 'draw' ? `Draw ${pct}%` : `${kind === 'home' ? 'Home win' : 'Away win'} (${teamName}) ${pct}%`;
   }
   if (pct >= 14) {
     return kind === 'draw' ? `Draw ${pct}%` : `${teamName} ${pct}%`;
@@ -363,8 +381,11 @@ function renumberTableList() {
   [...listEl.children].forEach((li, i) => {
     const currentRank = i + 1;
     li.querySelector('.pos').textContent = currentRank;
-    
-    // Keep input field updated with current position
+
+    li.classList.remove('zone-top4', 'zone-mid', 'zone-bottom3');
+    const zone = positionZoneClass(currentRank, total);
+    if (zone) li.classList.add(zone);
+
     const rankInput = li.querySelector('.rank-input');
     if (rankInput && document.activeElement !== rankInput) {
       rankInput.value = currentRank;
@@ -528,14 +549,26 @@ async function loadAllTables() {
     }
 
     const teamRows = sortedLiveTeams.length ? sortedLiveTeams : [...allTeams].sort();
+    const totalTeams = teamRows.length;
 
     const header = `<tr><th>Team</th>${playerEntries.map(p => `<th>${p.name}</th>`).join('')}</tr>`;
-    const rows = teamRows.map(teamName => `
+    const rows = teamRows.map((teamName, idx) => {
+      const actualPos = idx + 1;
+      const actualZone = positionZoneClass(actualPos, totalTeams);
+      return `
       <tr>
-        <td><span class="kit-dot" style="background:${typeof kitColor === 'function' ? kitColor(teamName) : '#ccc'}; margin-right:6px;"></span>${teamName}</td>
-        ${playerEntries.map(p => `<td class="pos-num">${p.positions[teamName] ?? '–'}</td>`).join('')}
+        <td>
+          <span class="kit-dot" style="background:${typeof kitColor === 'function' ? kitColor(teamName) : '#ccc'}; margin-right:6px;"></span>${teamName}
+          <span class="actual-standing ${actualZone}">#${actualPos}</span>
+        </td>
+        ${playerEntries.map(p => {
+          const predPos = p.positions[teamName];
+          const zone = positionZoneClass(predPos, totalTeams);
+          return `<td class="pos-num ${zone}">${predPos ?? '–'}</td>`;
+        }).join('')}
       </tr>
-    `).join('');
+    `;
+    }).join('');
 
     grid.innerHTML = `<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
 
@@ -586,15 +619,39 @@ async function loadCommunity() {
     const gwFixtures = byGW[gw].sort((a, b) => new Date(a.kickoffUTC) - new Date(b.kickoffUTC));
     gwFixtures.forEach(fx => {
       const fixturePreds = predsByFixture[fx.id] || [];
-      const rows = fixturePreds
-        .map(p => `<tr><td>${users[p.uid]?.displayName || 'Unknown'}</td><td>${p.predHome}–${p.predAway}</td></tr>`)
-        .join('');
+      const isFinished = fx.status === 'FINISHED';
+      const actual = isFinished ? outcomeInfo(fx.homeScore, fx.awayScore, fx.homeTeam, fx.awayTeam) : null;
+
+      const rows = fixturePreds.map(p => {
+        const info = outcomeInfo(p.predHome, p.predAway, fx.homeTeam, fx.awayTeam);
+        let resultIcon = '';
+        if (isFinished) {
+          resultIcon = info.kind === actual.kind
+            ? '<span class="result-tick" title="Outcome correct">✅</span>'
+            : '<span class="result-cross" title="Outcome incorrect">❌</span>';
+        }
+        return `<tr>
+          <td class="player-name">${users[p.uid]?.displayName || 'Unknown'}</td>
+          <td class="score-cell">${p.predHome}–${p.predAway}</td>
+          <td class="outcome-cell ${info.cls}">${info.text}</td>
+          <td class="result-icon">${resultIcon}</td>
+        </tr>`;
+      }).join('');
+
+      let ftLine = '';
+      if (isFinished) {
+        const correctCount = fixturePreds.filter(p => outcomeInfo(p.predHome, p.predAway, fx.homeTeam, fx.awayTeam).kind === actual.kind).length;
+        const pctCorrect = fixturePreds.length ? Math.round((correctCount / fixturePreds.length) * 100) : 0;
+        ftLine = `<div class="ft-result-line ${actual.cls}">FT ${actual.text} ${fx.homeScore}-${fx.awayScore} (predicted by ${pctCorrect}% of players)</div>`;
+      }
+
       const card = document.createElement('div');
       card.className = 'community-fixture';
       card.innerHTML = `
-        <h3>${fx.homeTeam} vs ${fx.awayTeam} ${fx.status === 'FINISHED' ? `<span style="color:var(--chalk-dim); font-weight:400;">— FT ${fx.homeScore}–${fx.awayScore}</span>` : ''}</h3>
+        <h3>${fx.homeTeam} vs ${fx.awayTeam} ${isFinished ? `<span style="color:var(--chalk-dim); font-weight:400;">— FT ${fx.homeScore}–${fx.awayScore}</span>` : ''}</h3>
         <div class="crowd-pulse">${fixturePreds.length ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">No predictions yet</div>'}</div>
-        <table>${rows || '<tr><td colspan="2" class="empty-state">No predictions</td></tr>'}</table>
+        ${ftLine}
+        <table>${rows || '<tr><td colspan="4" class="empty-state">No predictions</td></tr>'}</table>
       `;
       grid.appendChild(card);
     });

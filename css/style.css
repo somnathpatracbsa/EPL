@@ -202,7 +202,7 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .crowd-bar .home { background: var(--turf-bright); }
 .crowd-bar .draw { background: var(--chalk-dim); }
 .crowd-bar .away { background: var(--amber); }
-.crowd-avg-goals { margin-top: 6px; font-size: 11px; color: var(--amber); font-family: var(--font-mono); font-weight: 700; }
+.crowd-avg-goals { margin-top: 6px; font-size: 11px; color: var(--chalk); font-family: var(--font-mono); font-weight: 700; }
 .crowd-scorelines { margin-top: 4px; font-size: 11px; color: var(--chalk-dim); font-family: var(--font-mono); }
 .crowd-locked-note { font-size: 11px; color: var(--chalk-dim); font-style: italic; margin-top: 10px; }
 
@@ -250,6 +250,15 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   width: 24px;
 }
 .table-list li.dragging { opacity: 0.4; }
+
+/* Position zone coloring — top4/relegation/mid-table indicator, shared across Predict League Table and Table tabs */
+.table-list li.zone-top4 { border-left: 4px solid var(--turf-bright); background: rgba(76,191,122,0.08); }
+.table-list li.zone-mid { border-left: 4px solid var(--amber); background: rgba(255,182,39,0.08); }
+.table-list li.zone-bottom3 { border-left: 4px solid var(--card-red); background: rgba(230,69,69,0.08); }
+.pos-num.zone-top4, .actual-standing.zone-top4 { color: var(--turf-bright); font-weight: 700; }
+.pos-num.zone-mid, .actual-standing.zone-mid { color: var(--amber); font-weight: 700; }
+.pos-num.zone-bottom3, .actual-standing.zone-bottom3 { color: var(--card-red); font-weight: 700; }
+.actual-standing { font-family: var(--font-mono); font-size: 11px; margin-left: 6px; }
 .reorder-btns { margin-left: auto; display: flex; flex-direction: column; gap: 2px; }
 .reorder-btn {
   background: rgba(255,255,255,0.08);
@@ -353,8 +362,19 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .community-fixture h3 { margin: 0 0 10px; font-size: 15px; }
 .community-fixture .crowd-pulse { margin-top: 0; padding-top: 0; border-top: none; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px dashed var(--line); }
 .community-fixture table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.community-fixture td { padding: 5px 6px; border-bottom: 1px solid var(--line); }
-.community-fixture td:last-child { font-family: var(--font-mono); text-align: right; font-weight: 700; color: var(--amber); }
+.community-fixture td { padding: 6px; border-bottom: 1px solid var(--line); }
+.community-fixture td.player-name { text-align: left; }
+.community-fixture td.score-cell { font-family: var(--font-mono); font-weight: 700; color: var(--amber); text-align: right; white-space: nowrap; }
+.community-fixture td.outcome-cell { font-weight: 600; font-size: 12px; text-align: left; padding-left: 14px; }
+.community-fixture td.result-icon { text-align: center; width: 28px; font-size: 13px; }
+
+/* Outcome coloring, shared between per-prediction rows and the FT result line */
+.outcome-home { color: var(--turf-bright); }
+.outcome-draw { color: var(--chalk-dim); }
+.outcome-away { color: var(--amber); }
+.ft-result-line { margin-bottom: 10px; font-weight: 700; font-size: 13px; }
+.result-tick { color: var(--turf-bright); }
+.result-cross { color: var(--card-red); }
 
 /* ---------- Leaderboard ---------- */
 .leaderboard-table { width: 100%; border-collapse: collapse; }
@@ -499,4 +519,13 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 @media (max-width: 400px) {
   .players-grid { grid-template-columns: 1fr; }
   .brand-name { font-size: 20px; }
+}
+
+@media (max-width: 480px) {
+  .crowd-bar { height: 24px; font-size: 9px; }
+  .crowd-bar span { padding: 0 2px; }
+  .community-fixture table { font-size: 11px; }
+  .community-fixture td.outcome-cell { padding-left: 6px; font-size: 10px; }
+  .community-fixture td.score-cell { padding-left: 6px; }
+  .ft-result-line { font-size: 12px; }
 }
