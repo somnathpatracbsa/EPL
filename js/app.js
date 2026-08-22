@@ -94,6 +94,7 @@ onAuthStateChanged(auth, async (user) => {
     await loadConfig();
     await loadFixtures();
     await loadTablePredictor();
+    await setupAwardsForm();
   } else {
     authArea.innerHTML = `<button id="signInBtn" class="btn btn-primary">Sign in with Google</button>`;
     document.getElementById('signInBtn').addEventListener('click', () => signInWithPopup(auth, provider));
@@ -203,6 +204,56 @@ async function loadFixtures() {
   await setupGwExtras(fixtures);
 }
 
+function computeCrowdStats(predictionDocs, fixture) {
+  let home = 0, draw = 0, away = 0, sumHome = 0, sumAway = 0;
+  const scorelineCounts = {};
+  predictionDocs.forEach(p => {
+    if (p.predHome > p.predAway) home++;
+    else if (p.predHome < p.predAway) away++;
+    else draw++;
+    sumHome += p.predHome;
+    sumAway += p.predAway;
+    const key = `${p.predHome}-${p.predAway}`;
+    scorelineCounts[key] = (scorelineCounts[key] || 0) + 1;
+  });
+  const total = home + draw + away;
+  const pct = n => Math.round((n / total) * 100);
+  const topScorelines = Object.entries(scorelineCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  return {
+    total, home, draw, away,
+    pctHome: pct(home), pctDraw: pct(draw), pctAway: pct(away),
+    avgHome: (sumHome / total), avgAway: (sumAway / total),
+    topScorelines
+  };
+}
+
+function segmentLabel(kind, pct, teamName) {
+  // Longer, more descriptive labels only when there's room; shrinks down as the segment narrows
+  // so text never overflows into the next segment.
+  if (pct <= 0) return '';
+  if (pct >= 32) {
+    return kind === 'draw' ? `Draw ${pct}%` : `${kind === 'home' ? 'Home' : 'Away'} (${teamName}) win ${pct}%`;
+  }
+  if (pct >= 14) {
+    return kind === 'draw' ? `Draw ${pct}%` : `${teamName} ${pct}%`;
+  }
+  return `${pct}%`;
+}
+
+function crowdPulseHTML(stats, fixture) {
+  const { total, pctHome, pctDraw, pctAway, avgHome, avgAway, topScorelines } = stats;
+  return `
+    <div class="label">Crowd predicts (${total} vote${total === 1 ? '' : 's'})</div>
+    <div class="crowd-bar">
+      ${pctHome ? `<span class="home" style="width:${pctHome}%" title="Home win (${fixture.homeTeam})">${segmentLabel('home', pctHome, fixture.homeTeam)}</span>` : ''}
+      ${pctDraw ? `<span class="draw" style="width:${pctDraw}%" title="Draw">${segmentLabel('draw', pctDraw)}</span>` : ''}
+      ${pctAway ? `<span class="away" style="width:${pctAway}%" title="Away win (${fixture.awayTeam})">${segmentLabel('away', pctAway, fixture.awayTeam)}</span>` : ''}
+    </div>
+    <div class="crowd-avg-goals">📊 Avg predicted score: ${fixture.homeTeam} ${avgHome.toFixed(1)} – ${avgAway.toFixed(1)} ${fixture.awayTeam}</div>
+    <div class="crowd-scorelines">Most predicted: ${topScorelines.map(([s, c]) => `${s} (${c})`).join(' · ')}</div>
+  `;
+}
+
 async function renderCrowdPulse(container, fixture, unlocked) {
   if (!unlocked) {
     container.innerHTML = `<div class="crowd-locked-note">🔒 Save your own prediction to see what everyone else thinks.</div>`;
@@ -214,34 +265,8 @@ async function renderCrowdPulse(container, fixture, unlocked) {
     container.innerHTML = `<div class="crowd-locked-note">No other predictions yet — be the first!</div>`;
     return;
   }
-  let home = 0, draw = 0, away = 0;
-  const scorelineCounts = {};
-  snap.forEach(d => {
-    const p = d.data();
-    if (p.predHome > p.predAway) home++;
-    else if (p.predHome < p.predAway) away++;
-    else draw++;
-    const key = `${p.predHome}-${p.predAway}`;
-    scorelineCounts[key] = (scorelineCounts[key] || 0) + 1;
-  });
-  const total = home + draw + away;
-  const pct = n => Math.round((n / total) * 100);
-  const topScorelines = Object.entries(scorelineCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
-
-  container.innerHTML = `
-    <div class="label">Crowd predicts (${total} vote${total === 1 ? '' : 's'})</div>
-    <div class="crowd-bar">
-      ${home ? `<span class="home" style="width:${pct(home)}%"></span>` : ''}
-      ${draw ? `<span class="draw" style="width:${pct(draw)}%"></span>` : ''}
-      ${away ? `<span class="away" style="width:${pct(away)}%"></span>` : ''}
-    </div>
-    <div class="crowd-legend">
-      ${home ? `<span>🟢 ${pct(home)}% predict home win (${fixture.homeTeam})</span>` : ''}
-      ${draw ? `<span>⚪ ${pct(draw)}% predict a draw</span>` : ''}
-      ${away ? `<span>🟡 ${pct(away)}% predict away win (${fixture.awayTeam})</span>` : ''}
-    </div>
-    <div class="crowd-scorelines">Most predicted: ${topScorelines.map(([s, c]) => `${s} (${c})`).join(' · ')}</div>
-  `;
+  const stats = computeCrowdStats(snap.docs.map(d => d.data()), fixture);
+  container.innerHTML = crowdPulseHTML(stats, fixture);
 }
 
 // ---------- Gameweek extras ----------
@@ -446,15 +471,9 @@ async function loadAllTables() {
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
 
   try {
-    const tablesPromise = getDocs(collection(db, 'tablePredictions'));
-    const usersPromise = typeof getUsersMap === 'function' ? getUsersMap() : Promise.resolve({});
-    const standingsPromise = getDocs(collection(db, 'standings')).catch(() => null);
-
-    const [tablesSnap, users, standingsSnap] = await Promise.all([
-      tablesPromise,
-      usersPromise,
-      standingsPromise
-    ]);
+    const cfg = await loadConfig(); // also refreshes the module-level `standingsOrder` array
+    const tablesSnap = await getDocs(collection(db, 'tablePredictions'));
+    const users = typeof getUsersMap === 'function' ? await getUsersMap() : {};
 
     if (!tablesSnap || tablesSnap.empty) {
       grid.innerHTML = '<p class="empty-state">No table predictions submitted yet.</p>';
@@ -467,7 +486,7 @@ async function loadAllTables() {
     tablesSnap.forEach(d => {
       const data = d.data();
       if (!data || !Array.isArray(data.teams)) return;
-      
+
       const positions = {};
       data.teams.forEach(e => {
         if (e && e.team) {
@@ -490,38 +509,26 @@ async function loadAllTables() {
 
     playerEntries.sort((a, b) => a.name.localeCompare(b.name));
 
-    // Helper to normalize team names for matching (e.g. "Arsenal FC" -> "arsenal")
+    // Normalize team names so "Arsenal" / "Arsenal FC" / etc. still match up correctly
     const normalize = name => String(name || '').toLowerCase().replace(/fc|afc|&/g, '').replace(/[^a-z0-9]/g, '').trim();
 
+    // cfg.standingsOrder comes straight from automation/sync-and-score.js's syncStandingsOrder(),
+    // which writes it to config/current every ~10 min run — this is the real current league order.
     let sortedLiveTeams = [];
-    if (standingsSnap && !standingsSnap.empty) {
-      const standingsList = standingsSnap.docs.map(doc => doc.data());
-      
-      // Sort standings by position field directly or by points / GD
-      standingsList.sort((a, b) => {
-        if (a.position && b.position) return a.position - b.position;
-        if ((b.points || 0) !== (a.points || 0)) return (b.points || 0) - (a.points || 0);
-        const gdA = a.goalDifference ?? ((a.goalsFor || 0) - (a.goalsAgainst || 0));
-        const gdB = b.goalDifference ?? ((b.goalsFor || 0) - (b.goalsAgainst || 0));
-        if (gdB !== gdA) return gdB - gdA;
-        return (b.goalsFor || 0) - (a.goalsFor || 0);
-      });
-
-      // Map standings team names back to the team names stored in user predictions
+    if (cfg.standingsOrder && cfg.standingsOrder.length) {
       const predictionTeamsArray = [...allTeams];
-      sortedLiveTeams = standingsList
-        .map(s => {
-          const rawName = s.team || s.teamName || s.name || s.shortName;
-          const normStanding = normalize(rawName);
+      sortedLiveTeams = cfg.standingsOrder
+        .map(standingName => {
+          const normStanding = normalize(standingName);
           return predictionTeamsArray.find(pt => normalize(pt) === normStanding);
         })
         .filter(Boolean);
+      // Catch any predicted team that didn't match (name mismatch) so it's not silently dropped from the table
+      predictionTeamsArray.forEach(t => { if (!sortedLiveTeams.includes(t)) sortedLiveTeams.push(t); });
     }
 
-    // Fallback: Standings -> Unsorted prediction team order
-    const teamRows = sortedLiveTeams.length ? sortedLiveTeams : [...allTeams];
+    const teamRows = sortedLiveTeams.length ? sortedLiveTeams : [...allTeams].sort();
 
-    // Render Table Matrix
     const header = `<tr><th>Team</th>${playerEntries.map(p => `<th>${p.name}</th>`).join('')}</tr>`;
     const rows = teamRows.map(teamName => `
       <tr>
@@ -578,13 +585,15 @@ async function loadCommunity() {
 
     const gwFixtures = byGW[gw].sort((a, b) => new Date(a.kickoffUTC) - new Date(b.kickoffUTC));
     gwFixtures.forEach(fx => {
-      const rows = (predsByFixture[fx.id] || [])
+      const fixturePreds = predsByFixture[fx.id] || [];
+      const rows = fixturePreds
         .map(p => `<tr><td>${users[p.uid]?.displayName || 'Unknown'}</td><td>${p.predHome}–${p.predAway}</td></tr>`)
         .join('');
       const card = document.createElement('div');
       card.className = 'community-fixture';
       card.innerHTML = `
         <h3>${fx.homeTeam} vs ${fx.awayTeam} ${fx.status === 'FINISHED' ? `<span style="color:var(--chalk-dim); font-weight:400;">— FT ${fx.homeScore}–${fx.awayScore}</span>` : ''}</h3>
+        <div class="crowd-pulse">${fixturePreds.length ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">No predictions yet</div>'}</div>
         <table>${rows || '<tr><td colspan="2" class="empty-state">No predictions</td></tr>'}</table>
       `;
       grid.appendChild(card);
@@ -783,5 +792,6 @@ async function loadProfile() {
   }).join('');
 }
 
-// Init forms that don't depend on gameweek fixtures
-setupAwardsForm();
+// Note: setupAwardsForm() is called from onAuthStateChanged once currentUser is known —
+// calling it at module load time (before sign-in resolves) meant the Save button's
+// click handler never got attached, since the function returns early with no user.

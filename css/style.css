@@ -197,12 +197,13 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 /* Crowd sentiment bar */
 .crowd-pulse { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .crowd-pulse .label { font-family: var(--font-mono); font-size: 10px; color: var(--chalk-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-.crowd-bar { display: flex; height: 20px; border-radius: 6px; overflow: hidden; font-family: var(--font-mono); font-size: 10px; }
-.crowd-bar span { display: flex; align-items: center; justify-content: center; color: var(--pitch-night); font-weight: 700; white-space: nowrap; overflow: hidden; }
+.crowd-bar { display: flex; height: 30px; border-radius: 6px; overflow: hidden; font-family: var(--font-mono); font-size: 10px; }
+.crowd-bar span { display: flex; align-items: center; justify-content: center; color: var(--pitch-night); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; }
 .crowd-bar .home { background: var(--turf-bright); }
 .crowd-bar .draw { background: var(--chalk-dim); }
 .crowd-bar .away { background: var(--amber); }
-.crowd-scorelines { margin-top: 6px; font-size: 11px; color: var(--chalk-dim); font-family: var(--font-mono); }
+.crowd-avg-goals { margin-top: 6px; font-size: 11px; color: var(--amber); font-family: var(--font-mono); font-weight: 700; }
+.crowd-scorelines { margin-top: 4px; font-size: 11px; color: var(--chalk-dim); font-family: var(--font-mono); }
 .crowd-locked-note { font-size: 11px; color: var(--chalk-dim); font-style: italic; margin-top: 10px; }
 
 /* Gameweek extras */
@@ -350,6 +351,7 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .community-grid { display: flex; flex-direction: column; gap: 18px; }
 .community-fixture { background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
 .community-fixture h3 { margin: 0 0 10px; font-size: 15px; }
+.community-fixture .crowd-pulse { margin-top: 0; padding-top: 0; border-top: none; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px dashed var(--line); }
 .community-fixture table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .community-fixture td { padding: 5px 6px; border-bottom: 1px solid var(--line); }
 .community-fixture td:last-child { font-family: var(--font-mono); text-align: right; font-weight: 700; color: var(--amber); }
