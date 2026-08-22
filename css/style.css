@@ -46,7 +46,7 @@ body {
   letter-spacing: 0.5px;
   color: var(--pitch-night);
   font-weight: 700;
-  animation: scroll-ticker 90s linear infinite;
+  animation: scroll-ticker 30s linear infinite;
   padding-left: 100%;
 }
 @keyframes scroll-ticker {
@@ -106,6 +106,13 @@ body {
 }
 .tab:hover { color: var(--chalk); background: rgba(255,255,255,0.05); }
 .tab.active { background: var(--turf); color: var(--chalk); }
+.tab.tab-primary {
+  font-weight: 800;
+  color: var(--amber);
+  border: 1px solid rgba(255, 182, 39, 0.4);
+}
+.tab.tab-primary.active { background: var(--amber); color: var(--pitch-night); border-color: var(--amber); }
+.tab.tab-primary:hover:not(.active) { background: rgba(255, 182, 39, 0.12); }
 
 .btn {
   font-family: var(--font-body);
@@ -195,7 +202,6 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .crowd-bar .home { background: var(--turf-bright); }
 .crowd-bar .draw { background: var(--chalk-dim); }
 .crowd-bar .away { background: var(--amber); }
-.crowd-legend { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; font-size: 11px; color: var(--chalk-dim); font-family: var(--font-mono); }
 .crowd-scorelines { margin-top: 6px; font-size: 11px; color: var(--chalk-dim); font-family: var(--font-mono); }
 .crowd-locked-note { font-size: 11px; color: var(--chalk-dim); font-style: italic; margin-top: 10px; }
 
@@ -243,6 +249,51 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   width: 24px;
 }
 .table-list li.dragging { opacity: 0.4; }
+.reorder-btns { margin-left: auto; display: flex; flex-direction: column; gap: 2px; }
+.reorder-btn {
+  background: rgba(255,255,255,0.08);
+  border: none;
+  color: var(--chalk);
+  width: 30px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  touch-action: manipulation;
+}
+.reorder-btn:hover { background: var(--amber); color: var(--pitch-night); }
+.reorder-btn:disabled { opacity: 0.25; cursor: default; background: rgba(255,255,255,0.08); color: var(--chalk); }
+
+/* ---------- Community table matrix ---------- */
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.matrix-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.matrix-table th, .matrix-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  white-space: nowrap;
+}
+.matrix-table th { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; color: var(--chalk-dim); background: rgba(255,255,255,0.03); }
+.matrix-table td:first-child, .matrix-table th:first-child {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--pitch-night-2);
+  font-weight: 700;
+  z-index: 1;
+}
+.matrix-table td.pos-num { font-family: var(--font-mono); font-weight: 700; color: var(--amber); }
+
+/* ---------- Gameweek grouping in Community Game Predictions ---------- */
+.gw-section-header {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.5px;
+  margin: 28px 0 10px;
+  color: var(--amber);
+}
+.gw-section-header:first-child { margin-top: 0; }
 
 /* ---------- All table picks ---------- */
 .all-tables-grid { display: flex; flex-direction: column; gap: 14px; }

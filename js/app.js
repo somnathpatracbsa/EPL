@@ -15,6 +15,7 @@ const provider = new GoogleAuthProvider();
 let currentUser = null;
 let currentGW = null;
 let usersCache = null; // uid -> {displayName, email}
+let standingsOrder = null; // array of team names, current real standings order (may be null pre-season)
 
 const PL_TEAMS_DEFAULT = [
   "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton", "Chelsea",
@@ -22,7 +23,6 @@ const PL_TEAMS_DEFAULT = [
   "Leeds United", "Liverpool", "Manchester City", "Manchester United", "Newcastle United",
   "Nottingham Forest", "Sunderland", "Tottenham Hotspur"
 ]; // 2026-27 season — confirmed promoted: Coventry, Ipswich, Hull. Relegated: West Ham, Burnley, Wolves
-
 
 const BADGE_ICONS = {
   'Oracle of the Week': '🔮', 'Perfect Predictor': '🎯', 'Giant Killer': '⚡',
@@ -38,7 +38,6 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   btn.classList.add('active');
   document.getElementById(btn.dataset.tab).classList.add('active');
 
-  // Lazy-load panels that don't need to refresh constantly
   if (btn.dataset.tab === 'allTables') loadAllTables();
   if (btn.dataset.tab === 'community') loadCommunity();
   if (btn.dataset.tab === 'players') loadPlayers();
@@ -53,6 +52,27 @@ function celebrate(message) {
   el.textContent = message;
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+function kitColor(teamName) {
+  const colors = ['#e64545', '#8b5cf6', '#4cbf7a', '#ffb627', '#3b82f6', '#ec4899', '#14b8a6'];
+  let hash = 0;
+  for (let i = 0; i < teamName.length; i++) hash = teamName.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function orderTeams(teams) {
+  if (!standingsOrder || !standingsOrder.length) return [...teams].sort();
+  const rank = new Map(standingsOrder.map((t, i) => [t, i]));
+  return [...teams].sort((a, b) => (rank.has(a) ? rank.get(a) : 999) - (rank.has(b) ? rank.get(b) : 999));
+}
+
+function matchStatusLine(fx, locked) {
+  if (fx.status === 'FINISHED') return `FT: ${fx.homeScore}–${fx.awayScore}`;
+  if (fx.status === 'IN_PLAY' || fx.status === 'PAUSED') {
+    return `🔴 LIVE: ${fx.homeScore ?? 0}–${fx.awayScore ?? 0} (as of last sync, updates every ~10 min)`;
+  }
+  return `${new Date(fx.kickoffUTC).toLocaleString()}${locked ? ' · LOCKED' : ''}`;
 }
 
 // ---------- Auth ----------
@@ -104,8 +124,8 @@ async function loadConfig() {
   const snap = await getDoc(doc(db, 'config', 'current'));
   const cfg = snap.exists() ? snap.data() : { currentGameweek: 1, tableLocked: false };
   currentGW = cfg.currentGameweek;
+  standingsOrder = cfg.standingsOrder || null;
   document.getElementById('gwNumber').textContent = currentGW;
-  document.getElementById('gwNumberCommunity').textContent = currentGW;
 
   const banner = document.getElementById('tableLockBanner');
   if (cfg.tableLocked) {
@@ -117,7 +137,7 @@ async function loadConfig() {
   return cfg;
 }
 
-// ---------- Predict tab ----------
+// ---------- Predict Gameweek tab ----------
 async function loadFixtures() {
   const cfg = await loadConfig();
   const fixturesSnap = await getDocs(collection(db, 'fixtures'));
@@ -183,23 +203,6 @@ async function loadFixtures() {
   await setupGwExtras(fixtures);
 }
 
-
-function matchStatusLine(fx, locked) {
-  if (fx.status === 'FINISHED') return `FT: ${fx.homeScore}–${fx.awayScore}`;
-  if (fx.status === 'IN_PLAY' || fx.status === 'PAUSED') return `🔴 LIVE: ${fx.homeScore ?? 0}–${fx.awayScore ?? 0} (as of last sync, updates every ~3h)`;
-  return `${new Date(fx.kickoffUTC).toLocaleString()}${locked ? ' · LOCKED' : ''}`;
-}
-
-
-
-function kitColor(teamName) {
-  // Deterministic color from team name, just for a bit of visual variety
-  const colors = ['#e64545', '#8b5cf6', '#4cbf7a', '#ffb627', '#3b82f6', '#ec4899', '#14b8a6'];
-  let hash = 0;
-  for (let i = 0; i < teamName.length; i++) hash = teamName.charCodeAt(i) + ((hash << 5) - hash);
-  return colors[Math.abs(hash) % colors.length];
-}
-
 async function renderCrowdPulse(container, fixture, unlocked) {
   if (!unlocked) {
     container.innerHTML = `<div class="crowd-locked-note">🔒 Save your own prediction to see what everyone else thinks.</div>`;
@@ -225,7 +228,7 @@ async function renderCrowdPulse(container, fixture, unlocked) {
   const pct = n => Math.round((n / total) * 100);
   const topScorelines = Object.entries(scorelineCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
-    container.innerHTML = `
+  container.innerHTML = `
     <div class="label">Crowd predicts (${total} vote${total === 1 ? '' : 's'})</div>
     <div class="crowd-bar">
       ${home ? `<span class="home" style="width:${pct(home)}%"></span>` : ''}
@@ -272,7 +275,7 @@ async function setupGwExtras(fixtures) {
   };
 }
 
-// ---------- Table Predictor tab ----------
+// ---------- Predict League Table tab ----------
 async function loadTablePredictor() {
   const cfg = await loadConfig();
   const isAdmin = currentUser.email === ADMIN_EMAIL;
@@ -280,19 +283,11 @@ async function loadTablePredictor() {
 
   const ref = doc(db, 'tablePredictions', currentUser.uid);
   const snap = await getDoc(ref);
-  const teams = snap.exists() && snap.data().teams ? snap.data().teams.map(t => t.team) : PL_TEAMS_DEFAULT;
+  const teams = snap.exists() && snap.data().teams
+    ? snap.data().teams.sort((a, b) => a.predictedPosition - b.predictedPosition).map(t => t.team)
+    : orderTeams(PL_TEAMS_DEFAULT);
 
-  const listEl = document.getElementById('tableList');
-  listEl.innerHTML = '';
-  teams.forEach((team, i) => {
-    const li = document.createElement('li');
-    li.draggable = !locked;
-    li.dataset.team = team;
-    li.innerHTML = `<span class="pos">${i + 1}</span> <span class="kit-dot" style="background:${kitColor(team)}"></span> ${team}`;
-    listEl.appendChild(li);
-  });
-  if (!locked) enableDragReorder(listEl);
-  document.getElementById('saveTableBtn').style.display = locked ? 'none' : 'inline-block';
+  renderTableList(teams, locked);
 
   document.getElementById('lockTableBtn').onclick = async () => {
     await setDoc(doc(db, 'config', 'current'), { tableLocked: true }, { merge: true });
@@ -306,15 +301,74 @@ async function loadTablePredictor() {
   };
 }
 
+function renderTableList(teams, locked) {
+  const listEl = document.getElementById('tableList');
+  listEl.innerHTML = '';
+  teams.forEach((team) => {
+    const li = document.createElement('li');
+    li.draggable = !locked;
+    li.dataset.team = team;
+    li.innerHTML = `
+      <span class="pos"></span>
+      <span class="kit-dot" style="background:${kitColor(team)}"></span>
+      <span style="flex:1;">${team}</span>
+      ${locked ? '' : `
+      <div class="reorder-btns">
+        <button type="button" class="reorder-btn up" aria-label="Move ${team} up">▲</button>
+        <button type="button" class="reorder-btn down" aria-label="Move ${team} down">▼</button>
+      </div>`}
+    `;
+    listEl.appendChild(li);
+  });
+  renumberTableList();
+  if (!locked) {
+    enableDragReorder(listEl);
+    enableButtonReorder(listEl); // works on both desktop clicks and mobile taps — the reliable fallback since HTML5 drag-and-drop doesn't work on mobile browsers
+  }
+  document.getElementById('saveTableBtn').style.display = locked ? 'none' : 'inline-block';
+}
+
+function renumberTableList() {
+  const listEl = document.getElementById('tableList');
+  [...listEl.children].forEach((li, i) => {
+    li.querySelector('.pos').textContent = i + 1;
+    const upBtn = li.querySelector('.reorder-btn.up');
+    const downBtn = li.querySelector('.reorder-btn.down');
+    if (upBtn) upBtn.disabled = (i === 0);
+    if (downBtn) downBtn.disabled = (i === listEl.children.length - 1);
+  });
+}
+
+function enableButtonReorder(listEl) {
+  listEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.reorder-btn');
+    if (!btn) return;
+    const li = btn.closest('li');
+    if (btn.classList.contains('up') && li.previousElementSibling) {
+      listEl.insertBefore(li, li.previousElementSibling);
+    } else if (btn.classList.contains('down') && li.nextElementSibling) {
+      listEl.insertBefore(li.nextElementSibling, li);
+    }
+    renumberTableList();
+  });
+}
+
 function enableDragReorder(listEl) {
   let dragged;
-  listEl.addEventListener('dragstart', (e) => { dragged = e.target; e.target.classList.add('dragging'); });
+  listEl.addEventListener('dragstart', (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    dragged = li;
+    li.classList.add('dragging');
+  });
   listEl.addEventListener('dragend', (e) => {
-    e.target.classList.remove('dragging');
-    [...listEl.children].forEach((li, i) => { li.querySelector('.pos').textContent = i + 1; });
+    const li = e.target.closest('li');
+    if (li) li.classList.remove('dragging');
+    renumberTableList();
   });
   listEl.addEventListener('dragover', (e) => {
     e.preventDefault();
+    if (!dragged) return;
     const after = getDragAfterElement(listEl, e.clientY);
     if (after == null) listEl.appendChild(dragged); else listEl.insertBefore(dragged, after);
   });
@@ -337,52 +391,78 @@ document.getElementById('saveTableBtn').addEventListener('click', async () => {
   celebrate('Table prediction saved! 📋');
 });
 
-// ---------- All Table Picks tab ----------
+// ---------- Community Table Predictions tab (matrix) ----------
 async function loadAllTables() {
   const grid = document.getElementById('allTablesGrid');
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
+  const cfg = await loadConfig();
   const [tablesSnap, users] = await Promise.all([getDocs(collection(db, 'tablePredictions')), getUsersMap()]);
   if (tablesSnap.empty) { grid.innerHTML = '<p class="empty-state">No table predictions submitted yet.</p>'; return; }
-  grid.innerHTML = '';
+
+  const playerEntries = [];
+  const allTeams = new Set();
   tablesSnap.forEach(d => {
     const t = d.data();
     if (!t.teams) return;
-    const name = users[d.id]?.displayName || 'Unknown player';
-    const card = document.createElement('div');
-    card.className = 'player-table-card';
-    card.innerHTML = `
-      <div class="player-name">${name}</div>
-      <div class="chip-row">${t.teams.sort((a, b) => a.predictedPosition - b.predictedPosition).map(e => `<span class="chip">${e.predictedPosition}. ${e.team}</span>`).join('')}</div>
-    `;
-    grid.appendChild(card);
+    const positions = {};
+    t.teams.forEach(e => { positions[e.team] = e.predictedPosition; allTeams.add(e.team); });
+    playerEntries.push({ uid: d.id, name: users[d.id]?.displayName || 'Unknown player', positions });
   });
+  playerEntries.sort((a, b) => a.name.localeCompare(b.name));
+
+  const teamRows = cfg.standingsOrder && cfg.standingsOrder.length
+    ? cfg.standingsOrder.filter(t => allTeams.has(t))
+    : [...allTeams].sort();
+
+  const header = `<tr><th>Team</th>${playerEntries.map(p => `<th>${p.name}</th>`).join('')}</tr>`;
+  const rows = teamRows.map(team => `
+    <tr>
+      <td><span class="kit-dot" style="background:${kitColor(team)}; margin-right:6px;"></span>${team}</td>
+      ${playerEntries.map(p => `<td class="pos-num">${p.positions[team] ?? '–'}</td>`).join('')}
+    </tr>
+  `).join('');
+
+  grid.innerHTML = `<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
 }
 
-// ---------- Community Predictions tab ----------
+// ---------- Community Game Predictions tab (all gameweeks, newest first) ----------
 async function loadCommunity() {
   const grid = document.getElementById('communityGrid');
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
-  const cfg = await loadConfig();
   const [fixturesSnap, predsSnap, users] = await Promise.all([
     getDocs(collection(db, 'fixtures')), getDocs(collection(db, 'predictions')), getUsersMap()
   ]);
-  const fixtures = fixturesSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(f => f.gameweek === cfg.currentGameweek);
-  if (!fixtures.length) { grid.innerHTML = '<p class="empty-state">No fixtures this gameweek yet.</p>'; return; }
+  const fixtures = fixturesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  if (!fixtures.length) { grid.innerHTML = '<p class="empty-state">No fixtures synced yet.</p>'; return; }
+
+  const byGW = {};
+  fixtures.forEach(f => { (byGW[f.gameweek] = byGW[f.gameweek] || []).push(f); });
+  const gwNumbers = Object.keys(byGW).map(Number).sort((a, b) => b - a);
+
+  const preds = predsSnap.docs.map(d => d.data());
+  const predsByFixture = {};
+  preds.forEach(p => { (predsByFixture[p.fixtureId] = predsByFixture[p.fixtureId] || []).push(p); });
 
   grid.innerHTML = '';
-  fixtures.forEach(fx => {
-    const rows = predsSnap.docs
-      .map(d => d.data())
-      .filter(p => p.fixtureId === fx.id)
-      .map(p => `<tr><td>${users[p.uid]?.displayName || 'Unknown'}</td><td>${p.predHome}–${p.predAway}</td></tr>`)
-      .join('');
-    const card = document.createElement('div');
-    card.className = 'community-fixture';
-    card.innerHTML = `
-      <h3>${fx.homeTeam} vs ${fx.awayTeam}</h3>
-      <table>${rows || '<tr><td colspan="2" class="empty-state">No predictions yet</td></tr>'}</table>
-    `;
-    grid.appendChild(card);
+  gwNumbers.forEach(gw => {
+    const sectionHeader = document.createElement('div');
+    sectionHeader.className = 'gw-section-header';
+    sectionHeader.textContent = `Gameweek ${gw}`;
+    grid.appendChild(sectionHeader);
+
+    const gwFixtures = byGW[gw].sort((a, b) => new Date(a.kickoffUTC) - new Date(b.kickoffUTC));
+    gwFixtures.forEach(fx => {
+      const rows = (predsByFixture[fx.id] || [])
+        .map(p => `<tr><td>${users[p.uid]?.displayName || 'Unknown'}</td><td>${p.predHome}–${p.predAway}</td></tr>`)
+        .join('');
+      const card = document.createElement('div');
+      card.className = 'community-fixture';
+      card.innerHTML = `
+        <h3>${fx.homeTeam} vs ${fx.awayTeam} ${fx.status === 'FINISHED' ? `<span style="color:var(--chalk-dim); font-weight:400;">— FT ${fx.homeScore}–${fx.awayScore}</span>` : ''}</h3>
+        <table>${rows || '<tr><td colspan="2" class="empty-state">No predictions</td></tr>'}</table>
+      `;
+      grid.appendChild(card);
+    });
   });
 }
 
@@ -556,7 +636,7 @@ async function loadProfile() {
   `;
 
   const historyEl = document.getElementById('profileHistory');
-  if (!preds.length) { historyEl.innerHTML = '<p class="empty-state">No predictions yet — head to Gameweek Predictions to get started.</p>'; return; }
+  if (!preds.length) { historyEl.innerHTML = '<p class="empty-state">No predictions yet — head to Predict Gameweek to get started.</p>'; return; }
   historyEl.innerHTML = preds.map(p => {
     const fx = fixturesById[p.fixtureId];
     if (!fx) return '';

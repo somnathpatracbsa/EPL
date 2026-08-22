@@ -194,7 +194,7 @@ async function updateLeaderboard() {
   return rows;
 }
 
-// ---------- 5. Table prediction checkpoint scoring ----------
+// ---------- 5. Table prediction checkpoint scoring (mid-season / final only) ----------
 async function scoreTablePredictions(weight) {
   const data = await apiFetch(`/competitions/${COMPETITION}/standings`);
   if (!data || !data.standings) return null;
@@ -218,6 +218,17 @@ async function scoreTablePredictions(weight) {
   });
   await batch.commit();
   console.log(`Table predictions scored at weight ${weight}.`);
+  return table;
+}
+
+// ---------- 5b. Live standings order (every run — powers row sorting on the site, not scoring) ----------
+async function syncStandingsOrder() {
+  const data = await apiFetch(`/competitions/${COMPETITION}/standings`);
+  if (!data || !data.standings) return null;
+  const table = data.standings.find(s => s.type === 'TOTAL').table;
+  const standingsOrder = table.sort((a, b) => a.position - b.position).map(t => t.team.name);
+  await db.collection('config').doc('current').set({ standingsOrder }, { merge: true });
+  console.log(`Standings order synced (${standingsOrder.length} teams).`);
   return table;
 }
 
@@ -337,9 +348,11 @@ async function main() {
   await scoreGwExtras();
   const rows = await updateLeaderboard();
 
+  const standingsTableLive = await syncStandingsOrder();
+
   const configSnap = await db.collection('config').doc('current').get();
   const currentGW = configSnap.exists ? configSnap.data().currentGameweek : null;
-  let standingsTable = null;
+  let standingsTable = standingsTableLive;
   if (currentGW === SCORING.MIDSEASON_GAMEWEEK) {
     standingsTable = await scoreTablePredictions(SCORING.MIDSEASON_WEIGHT);
   }

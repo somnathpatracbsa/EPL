@@ -10,7 +10,7 @@
 </head>
 <body>
 
-   <div id="ticker" class="ticker"><div class="ticker-track" id="tickerTrack">⚽ Loading fixtures…</div></div>
+  <div id="ticker" class="ticker"><div class="ticker-track" id="tickerTrack">⚽ Loading fixtures…</div></div>
 
   <header class="topbar">
     <div class="brand">
@@ -24,10 +24,10 @@
   </header>
 
   <nav class="tabs" id="tabs">
-    <button class="tab active" data-tab="predict">🎯 Gameweek Predictions</button>
-    <button class="tab" data-tab="table">📋 Table Predictor</button>
-    <button class="tab" data-tab="allTables">🗂️ All Table Picks</button>
-    <button class="tab" data-tab="community">🗣️ Community Predictions</button>
+    <button class="tab tab-primary active" data-tab="predict">🎯 Predict Gameweek</button>
+    <button class="tab tab-primary" data-tab="table">📋 Predict League Table</button>
+    <button class="tab" data-tab="allTables">🗂️ Community Table Predictions</button>
+    <button class="tab" data-tab="community">🗣️ Community Game Predictions</button>
     <button class="tab" data-tab="leaderboard">🏆 Leaderboard</button>
     <button class="tab" data-tab="awards">🎖️ Season Awards</button>
     <button class="tab" data-tab="players">👕 Player Profiles</button>
@@ -71,8 +71,8 @@
 
     <section id="table" class="panel">
       <div class="panel-head">
-        <h1>Predict the Final Table</h1>
-        <p class="sub">Drag teams into the order you think they'll finish. Scored at mid-season and at the final whistle.</p>
+        <h1>Predict League Table</h1>
+        <p class="sub">Drag teams (or use the ▲▼ buttons — works on mobile too) into the order you think they'll finish. Scored at mid-season and at the final whistle.</p>
       </div>
       <div id="tableLockBanner" class="lock-banner" style="display:none;"></div>
       <div id="adminLockControls" class="admin-controls" style="display:none;">
@@ -85,16 +85,16 @@
 
     <section id="allTables" class="panel">
       <div class="panel-head">
-        <h1>Everyone's Table Picks</h1>
-        <p class="sub">See how the whole group thinks the season plays out.</p>
+        <h1>Community Table Predictions</h1>
+        <p class="sub">Every player's predicted finishing position for every team, side by side. Rows are sorted by the current real league standings.</p>
       </div>
       <div id="allTablesGrid" class="all-tables-grid"></div>
     </section>
 
     <section id="community" class="panel">
       <div class="panel-head">
-        <h1>Community Predictions — Gameweek <span id="gwNumberCommunity">—</span></h1>
-        <p class="sub">Every scoreline, from everyone, for this gameweek's matches.</p>
+        <h1>Community Game Predictions</h1>
+        <p class="sub">Every scoreline, from everyone, for every gameweek — newest first.</p>
       </div>
       <div id="communityGrid" class="community-grid"></div>
     </section>
@@ -183,7 +183,7 @@
   <div id="celebrate" class="celebrate"></div>
 
   <footer class="footer">
-    <p>Scores sync automatically every few hours. No admin required.</p>
+    <p>Scores sync automatically every ~10 minutes. No admin required.</p>
   </footer>
 
   <script type="module" src="js/firebase-config.js"></script>
