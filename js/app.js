@@ -313,9 +313,12 @@ function renderTableList(teams, locked) {
       <span class="kit-dot" style="background:${kitColor(team)}"></span>
       <span style="flex:1;">${team}</span>
       ${locked ? '' : `
-      <div class="reorder-btns">
-        <button type="button" class="reorder-btn up" aria-label="Move ${team} up">▲</button>
-        <button type="button" class="reorder-btn down" aria-label="Move ${team} down">▼</button>
+      <div class="reorder-controls" style="display: flex; align-items: center; gap: 6px;">
+        <input type="number" class="rank-input" min="1" max="${teams.length}" aria-label="Set rank for ${team}" style="width: 45px; text-align: center;">
+        <div class="reorder-btns">
+          <button type="button" class="reorder-btn up" aria-label="Move ${team} up">▲</button>
+          <button type="button" class="reorder-btn down" aria-label="Move ${team} down">▼</button>
+        </div>
       </div>`}
     `;
     listEl.appendChild(li);
@@ -323,19 +326,61 @@ function renderTableList(teams, locked) {
   renumberTableList();
   if (!locked) {
     enableDragReorder(listEl);
-    enableButtonReorder(listEl); // works on both desktop clicks and mobile taps — the reliable fallback since HTML5 drag-and-drop doesn't work on mobile browsers
+    enableButtonReorder(listEl); 
+    enableDirectRankInput(listEl); // Handles manual input updates
   }
   document.getElementById('saveTableBtn').style.display = locked ? 'none' : 'inline-block';
 }
 
 function renumberTableList() {
   const listEl = document.getElementById('tableList');
+  const total = listEl.children.length;
   [...listEl.children].forEach((li, i) => {
-    li.querySelector('.pos').textContent = i + 1;
+    const currentRank = i + 1;
+    li.querySelector('.pos').textContent = currentRank;
+    
+    // Keep input field updated with current position
+    const rankInput = li.querySelector('.rank-input');
+    if (rankInput && document.activeElement !== rankInput) {
+      rankInput.value = currentRank;
+    }
+
     const upBtn = li.querySelector('.reorder-btn.up');
     const downBtn = li.querySelector('.reorder-btn.down');
     if (upBtn) upBtn.disabled = (i === 0);
-    if (downBtn) downBtn.disabled = (i === listEl.children.length - 1);
+    if (downBtn) downBtn.disabled = (i === total - 1);
+  });
+}
+
+function enableDirectRankInput(listEl) {
+  listEl.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('rank-input')) return;
+    
+    const input = e.target;
+    const li = input.closest('li');
+    const total = listEl.children.length;
+    let newRank = parseInt(input.value, 10);
+
+    // Validate rank input range
+    if (isNaN(newRank) || newRank < 1) newRank = 1;
+    if (newRank > total) newRank = total;
+
+    const targetIndex = newRank - 1;
+    const items = [...listEl.children];
+    const currentIndex = items.indexOf(li);
+
+    if (currentIndex === targetIndex) return;
+
+    // Move element to selected index
+    if (targetIndex >= items.length - 1) {
+      listEl.appendChild(li);
+    } else if (targetIndex > currentIndex) {
+      listEl.insertBefore(li, items[targetIndex + 1]);
+    } else {
+      listEl.insertBefore(li, items[targetIndex]);
+    }
+
+    renumberTableList();
   });
 }
 
@@ -391,6 +436,9 @@ document.getElementById('saveTableBtn').addEventListener('click', async () => {
   celebrate('Table prediction saved! 📋');
 });
 
+
+
+
 // ---------- Community Table Predictions tab (matrix) ----------
 async function loadAllTables() {
   const grid = document.getElementById('allTablesGrid');
@@ -425,6 +473,8 @@ async function loadAllTables() {
   grid.innerHTML = `<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
 }
 
+
+
 // ---------- Community Game Predictions tab (all gameweeks, newest first) ----------
 async function loadCommunity() {
   const grid = document.getElementById('communityGrid');
@@ -437,7 +487,18 @@ async function loadCommunity() {
 
   const byGW = {};
   fixtures.forEach(f => { (byGW[f.gameweek] = byGW[f.gameweek] || []).push(f); });
-  const gwNumbers = Object.keys(byGW).map(Number).sort((a, b) => b - a);
+
+  // 1. Determine current gameweek based on fixtures already played/started
+  const playedFixtures = fixtures.filter(f => f.status === 'FINISHED' || f.status === 'IN_PLAY' || f.status === 'PAUSED');
+  const currentGW = playedFixtures.length 
+    ? Math.max(...playedFixtures.map(f => Number(f.gameweek)))
+    : Math.min(...fixtures.map(f => Number(f.gameweek))); // Fallback to GW1 if season hasn't started
+
+  // 2. Filter gwNumbers so it only includes current and past gameweeks
+  const gwNumbers = Object.keys(byGW)
+    .map(Number)
+    .filter(gw => gw <= currentGW)
+    .sort((a, b) => b - a);
 
   const preds = predsSnap.docs.map(d => d.data());
   const predsByFixture = {};
@@ -465,6 +526,7 @@ async function loadCommunity() {
     });
   });
 }
+
 
 // ---------- Leaderboard tab ----------
 async function loadLeaderboard() {

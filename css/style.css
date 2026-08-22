@@ -46,7 +46,7 @@ body {
   letter-spacing: 0.5px;
   color: var(--pitch-night);
   font-weight: 700;
-  animation: scroll-ticker 30s linear infinite;
+  animation: scroll-ticker 90s linear infinite;
   padding-left: 100%;
 }
 @keyframes scroll-ticker {
@@ -264,6 +264,39 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 }
 .reorder-btn:hover { background: var(--amber); color: var(--pitch-night); }
 .reorder-btn:disabled { opacity: 0.25; cursor: default; background: rgba(255,255,255,0.08); color: var(--chalk); }
+
+
+
+/* Style for the new direct rank input */
+.rank-input {
+  background: var(--surface, #1e293b);
+  color: var(--chalk, #f8fafc);
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 0.9rem;
+  font-weight: bold;
+  outline: none;
+}
+
+.rank-input:focus {
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+/* Hide standard HTML number input spinner arrows for a cleaner mobile layout */
+.rank-input::-webkit-outer-spin-button,
+.rank-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.rank-input[type=number] {
+  -moz-appearance: textfield;
+}
+
+
+
 
 /* ---------- Community table matrix ---------- */
 .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
