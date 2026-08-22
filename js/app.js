@@ -227,11 +227,19 @@ function computeCrowdStats(predictionDocs, fixture) {
   const total = home + draw + away;
   const pct = n => Math.round((n / total) * 100);
   const topScorelines = Object.entries(scorelineCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+  let ftInfo = null;
+  if (fixture.status === 'FINISHED' && total > 0) {
+    const actual = outcomeInfo(fixture.homeScore, fixture.awayScore, fixture.homeTeam, fixture.awayTeam);
+    const correctCount = predictionDocs.filter(p => outcomeInfo(p.predHome, p.predAway, fixture.homeTeam, fixture.awayTeam).kind === actual.kind).length;
+    ftInfo = { actual, pctCorrect: Math.round((correctCount / total) * 100) };
+  }
+
   return {
     total, home, draw, away,
     pctHome: pct(home), pctDraw: pct(draw), pctAway: pct(away),
     avgHome: (sumHome / total), avgAway: (sumAway / total),
-    topScorelines
+    topScorelines, ftInfo
   };
 }
 
@@ -241,14 +249,37 @@ function outcomeInfo(predHome, predAway, homeTeam, awayTeam) {
   return { kind: 'draw', text: 'Draw', cls: 'outcome-draw' };
 }
 
+const TEAM_SHORT_NAMES = {
+  'Manchester United': 'Man Utd', 'Manchester United FC': 'Man Utd',
+  'Manchester City': 'Man City', 'Manchester City FC': 'Man City',
+  'Tottenham Hotspur': 'Spurs', 'Tottenham Hotspur FC': 'Spurs',
+  'Newcastle United': 'Newcastle', 'Newcastle United FC': 'Newcastle',
+  'Nottingham Forest': 'Nottm Forest', 'Nottingham Forest FC': 'Nottm Forest',
+  'Crystal Palace': 'C Palace', 'Crystal Palace FC': 'C Palace',
+  'West Ham United': 'West Ham', 'West Ham United FC': 'West Ham',
+  'Wolverhampton Wanderers': 'Wolves', 'Wolverhampton Wanderers FC': 'Wolves',
+  'Brighton & Hove Albion': 'Brighton', 'Brighton & Hove Albion FC': 'Brighton',
+  'Leeds United': 'Leeds', 'Leeds United FC': 'Leeds',
+  'Ipswich Town': 'Ipswich', 'Ipswich Town FC': 'Ipswich',
+  'Hull City': 'Hull', 'Hull City FC': 'Hull',
+  'Coventry City': 'Coventry', 'Coventry City FC': 'Coventry'
+};
+function shortTeamName(name) {
+  if (TEAM_SHORT_NAMES[name]) return TEAM_SHORT_NAMES[name];
+  const stripped = String(name || '').replace(/\s*(FC|AFC)$/i, '').trim();
+  return stripped.length > 12 ? stripped.slice(0, 11) + '…' : stripped;
+}
+
 function segmentLabel(kind, pct, teamName) {
   // Longer, more descriptive labels only when there's room; shrinks down as the segment narrows
-  // so text never overflows into the next segment. On narrow (mobile) viewports, always keep it
-  // to a bare percentage — full team-name labels don't fit in mobile-width segments and were
-  // getting cut off / visually overlapping the next segment.
+  // so text never overflows into the next segment. On narrow (mobile) viewports, we still show
+  // the team name (shortened) + percentage rather than dropping to a bare number — the bar wraps
+  // to a second line via CSS if needed so the name never gets cut off.
   if (pct <= 0) return '';
   const isNarrowScreen = window.innerWidth < 480;
-  if (isNarrowScreen) return `${pct}%`;
+  if (isNarrowScreen) {
+    return kind === 'draw' ? `Draw ${pct}%` : `${shortTeamName(teamName)} ${pct}%`;
+  }
   if (pct >= 32) {
     return kind === 'draw' ? `Draw ${pct}%` : `${kind === 'home' ? 'Home win' : 'Away win'} (${teamName}) ${pct}%`;
   }
@@ -259,8 +290,12 @@ function segmentLabel(kind, pct, teamName) {
 }
 
 function crowdPulseHTML(stats, fixture) {
-  const { total, pctHome, pctDraw, pctAway, avgHome, avgAway, topScorelines } = stats;
+  const { total, pctHome, pctDraw, pctAway, avgHome, avgAway, topScorelines, ftInfo } = stats;
+  const ftLine = ftInfo
+    ? `<div class="ft-result-line ${ftInfo.actual.cls}">FT ${ftInfo.actual.text} ${fixture.homeScore}-${fixture.awayScore} (predicted by ${ftInfo.pctCorrect}% of players)</div>`
+    : '';
   return `
+    ${ftLine}
     <div class="label">Crowd predicts (${total} vote${total === 1 ? '' : 's'})</div>
     <div class="crowd-bar">
       ${pctHome ? `<span class="home" style="width:${pctHome}%" title="Home win (${fixture.homeTeam})">${segmentLabel('home', pctHome, fixture.homeTeam)}</span>` : ''}
@@ -631,26 +666,18 @@ async function loadCommunity() {
             : '<span class="result-cross" title="Outcome incorrect">❌</span>';
         }
         return `<tr>
-          <td class="player-name">${users[p.uid]?.displayName || 'Unknown'}</td>
-          <td class="score-cell">${p.predHome}–${p.predAway}</td>
+          <td class="player-name ${info.cls}">${users[p.uid]?.displayName || 'Unknown'}</td>
+          <td class="score-cell ${info.cls}">${p.predHome}–${p.predAway}</td>
           <td class="outcome-cell ${info.cls}">${info.text}</td>
           <td class="result-icon">${resultIcon}</td>
         </tr>`;
       }).join('');
-
-      let ftLine = '';
-      if (isFinished) {
-        const correctCount = fixturePreds.filter(p => outcomeInfo(p.predHome, p.predAway, fx.homeTeam, fx.awayTeam).kind === actual.kind).length;
-        const pctCorrect = fixturePreds.length ? Math.round((correctCount / fixturePreds.length) * 100) : 0;
-        ftLine = `<div class="ft-result-line ${actual.cls}">FT ${actual.text} ${fx.homeScore}-${fx.awayScore} (predicted by ${pctCorrect}% of players)</div>`;
-      }
 
       const card = document.createElement('div');
       card.className = 'community-fixture';
       card.innerHTML = `
         <h3>${fx.homeTeam} vs ${fx.awayTeam} ${isFinished ? `<span style="color:var(--chalk-dim); font-weight:400;">— FT ${fx.homeScore}–${fx.awayScore}</span>` : ''}</h3>
         <div class="crowd-pulse">${fixturePreds.length ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">No predictions yet</div>'}</div>
-        ${ftLine}
         <table>${rows || '<tr><td colspan="4" class="empty-state">No predictions</td></tr>'}</table>
       `;
       grid.appendChild(card);

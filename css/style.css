@@ -364,7 +364,7 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .community-fixture table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .community-fixture td { padding: 6px; border-bottom: 1px solid var(--line); }
 .community-fixture td.player-name { text-align: left; }
-.community-fixture td.score-cell { font-family: var(--font-mono); font-weight: 700; color: var(--amber); text-align: right; white-space: nowrap; }
+.community-fixture td.score-cell { font-family: var(--font-mono); font-weight: 700; text-align: right; white-space: nowrap; }
 .community-fixture td.outcome-cell { font-weight: 600; font-size: 12px; text-align: left; padding-left: 14px; }
 .community-fixture td.result-icon { text-align: center; width: 28px; font-size: 13px; }
 
@@ -522,8 +522,8 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 }
 
 @media (max-width: 480px) {
-  .crowd-bar { height: 24px; font-size: 9px; }
-  .crowd-bar span { padding: 0 2px; }
+  .crowd-bar { height: auto; min-height: 26px; font-size: 9px; align-items: stretch; }
+  .crowd-bar span { padding: 3px 2px; white-space: normal; line-height: 1.15; text-align: center; word-break: break-word; }
   .community-fixture table { font-size: 11px; }
   .community-fixture td.outcome-cell { padding-left: 6px; font-size: 10px; }
   .community-fixture td.score-cell { padding-left: 6px; }
