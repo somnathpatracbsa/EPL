@@ -442,35 +442,100 @@ document.getElementById('saveTableBtn').addEventListener('click', async () => {
 // ---------- Community Table Predictions tab (matrix) ----------
 async function loadAllTables() {
   const grid = document.getElementById('allTablesGrid');
+  if (!grid) return;
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
-  const cfg = await loadConfig();
-  const [tablesSnap, users] = await Promise.all([getDocs(collection(db, 'tablePredictions')), getUsersMap()]);
-  if (tablesSnap.empty) { grid.innerHTML = '<p class="empty-state">No table predictions submitted yet.</p>'; return; }
 
-  const playerEntries = [];
-  const allTeams = new Set();
-  tablesSnap.forEach(d => {
-    const t = d.data();
-    if (!t.teams) return;
-    const positions = {};
-    t.teams.forEach(e => { positions[e.team] = e.predictedPosition; allTeams.add(e.team); });
-    playerEntries.push({ uid: d.id, name: users[d.id]?.displayName || 'Unknown player', positions });
-  });
-  playerEntries.sort((a, b) => a.name.localeCompare(b.name));
+  try {
+    const tablesPromise = getDocs(collection(db, 'tablePredictions'));
+    const usersPromise = typeof getUsersMap === 'function' ? getUsersMap() : Promise.resolve({});
+    const standingsPromise = getDocs(collection(db, 'standings')).catch(() => null);
 
-  const teamRows = cfg.standingsOrder && cfg.standingsOrder.length
-    ? cfg.standingsOrder.filter(t => allTeams.has(t))
-    : [...allTeams].sort();
+    const [tablesSnap, users, standingsSnap] = await Promise.all([
+      tablesPromise,
+      usersPromise,
+      standingsPromise
+    ]);
 
-  const header = `<tr><th>Team</th>${playerEntries.map(p => `<th>${p.name}</th>`).join('')}</tr>`;
-  const rows = teamRows.map(team => `
-    <tr>
-      <td><span class="kit-dot" style="background:${kitColor(team)}; margin-right:6px;"></span>${team}</td>
-      ${playerEntries.map(p => `<td class="pos-num">${p.positions[team] ?? '–'}</td>`).join('')}
-    </tr>
-  `).join('');
+    if (!tablesSnap || tablesSnap.empty) {
+      grid.innerHTML = '<p class="empty-state">No table predictions submitted yet.</p>';
+      return;
+    }
 
-  grid.innerHTML = `<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
+    const playerEntries = [];
+    const allTeams = new Set();
+
+    tablesSnap.forEach(d => {
+      const data = d.data();
+      if (!data || !Array.isArray(data.teams)) return;
+      
+      const positions = {};
+      data.teams.forEach(e => {
+        if (e && e.team) {
+          positions[e.team] = e.predictedPosition;
+          allTeams.add(e.team);
+        }
+      });
+
+      playerEntries.push({
+        uid: d.id,
+        name: users[d.id]?.displayName || data.userName || 'Unknown player',
+        positions
+      });
+    });
+
+    if (playerEntries.length === 0 || allTeams.size === 0) {
+      grid.innerHTML = '<p class="empty-state">No complete table predictions found.</p>';
+      return;
+    }
+
+    playerEntries.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Helper to normalize team names for matching (e.g. "Arsenal FC" -> "arsenal")
+    const normalize = name => String(name || '').toLowerCase().replace(/fc|afc|&/g, '').replace(/[^a-z0-9]/g, '').trim();
+
+    let sortedLiveTeams = [];
+    if (standingsSnap && !standingsSnap.empty) {
+      const standingsList = standingsSnap.docs.map(doc => doc.data());
+      
+      // Sort standings by position field directly or by points / GD
+      standingsList.sort((a, b) => {
+        if (a.position && b.position) return a.position - b.position;
+        if ((b.points || 0) !== (a.points || 0)) return (b.points || 0) - (a.points || 0);
+        const gdA = a.goalDifference ?? ((a.goalsFor || 0) - (a.goalsAgainst || 0));
+        const gdB = b.goalDifference ?? ((b.goalsFor || 0) - (b.goalsAgainst || 0));
+        if (gdB !== gdA) return gdB - gdA;
+        return (b.goalsFor || 0) - (a.goalsFor || 0);
+      });
+
+      // Map standings team names back to the team names stored in user predictions
+      const predictionTeamsArray = [...allTeams];
+      sortedLiveTeams = standingsList
+        .map(s => {
+          const rawName = s.team || s.teamName || s.name || s.shortName;
+          const normStanding = normalize(rawName);
+          return predictionTeamsArray.find(pt => normalize(pt) === normStanding);
+        })
+        .filter(Boolean);
+    }
+
+    // Fallback: Standings -> Unsorted prediction team order
+    const teamRows = sortedLiveTeams.length ? sortedLiveTeams : [...allTeams];
+
+    // Render Table Matrix
+    const header = `<tr><th>Team</th>${playerEntries.map(p => `<th>${p.name}</th>`).join('')}</tr>`;
+    const rows = teamRows.map(teamName => `
+      <tr>
+        <td><span class="kit-dot" style="background:${typeof kitColor === 'function' ? kitColor(teamName) : '#ccc'}; margin-right:6px;"></span>${teamName}</td>
+        ${playerEntries.map(p => `<td class="pos-num">${p.positions[teamName] ?? '–'}</td>`).join('')}
+      </tr>
+    `).join('');
+
+    grid.innerHTML = `<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
+
+  } catch (err) {
+    console.error('loadAllTables Error:', err);
+    grid.innerHTML = `<p class="empty-state">Failed to load community predictions. (${err.message})</p>`;
+  }
 }
 
 
