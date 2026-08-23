@@ -14,8 +14,7 @@ import admin from 'firebase-admin';
 const SCORING = {
   EXACT_SCORE_POINTS: 25,
   CORRECT_OUTCOME_POINTS: 10,
-  STREAK_MILESTONES: [3, 5, 10],
-  STREAK_BONUS: 5,
+  STREAK_TIERS: [ { min: 10, bonus: 20 }, { min: 5, bonus: 10 }, { min: 3, bonus: 5 } ], // highest tier reached applies — not cumulative
   TABLE_MAX_POINTS_PER_TEAM: 20,
   TABLE_POSITION_PENALTY: 2,
   MIDSEASON_GAMEWEEK: 19,
@@ -66,10 +65,9 @@ async function syncFixtures() {
 }
 
 // ---------- 2. Score newly finished matches ----------
-async function scoreFinishedMatches() {
-  const fixturesSnap = await db.collection('fixtures').where('status', '==', 'FINISHED').get();
+async function scoreFinishedMatches(fixturesInMemory) {
   const finished = {};
-  fixturesSnap.forEach(d => { finished[d.id] = d.data(); });
+  fixturesInMemory.forEach(f => { if (f.status === 'FINISHED') finished[f.id] = f; });
 
   const predsSnap = await db.collection('predictions').where('scored', '==', false).get();
   let scoredCount = 0;
@@ -89,10 +87,7 @@ async function scoreFinishedMatches() {
 }
 
 // ---------- 3. Score gameweek extras (top scoring team / clean sheet team) ----------
-async function scoreGwExtras() {
-  const fixturesSnap = await db.collection('fixtures').get();
-  const allFixtures = fixturesSnap.docs.map(d => d.data());
-
+async function scoreGwExtras(allFixtures) {
   // Group finished fixtures by gameweek where the ENTIRE gameweek is finished
   const byGW = {};
   allFixtures.forEach(f => { (byGW[f.gameweek] = byGW[f.gameweek] || []).push(f); });
@@ -131,15 +126,14 @@ async function scoreGwExtras() {
 }
 
 // ---------- 4. Rebuild leaderboard ----------
-async function updateLeaderboard() {
-  const [usersSnap, predsSnap, fixturesSnap, tablePredsSnap, extrasSnap] = await Promise.all([
+async function updateLeaderboard(fixturesInMemory) {
+  const [usersSnap, predsSnap, tablePredsSnap, extrasSnap] = await Promise.all([
     db.collection('users').get(), db.collection('predictions').get(),
-    db.collection('fixtures').get(), db.collection('tablePredictions').get(),
-    db.collection('gwExtraPredictions').get()
+    db.collection('tablePredictions').get(), db.collection('gwExtraPredictions').get()
   ]);
 
   const fixtureGW = {};
-  fixturesSnap.forEach(d => { fixtureGW[d.id] = d.data().gameweek; });
+  fixturesInMemory.forEach(f => { fixtureGW[f.id] = f.gameweek; });
 
   const userPoints = {}, userGWHit = {}, userExtraPoints = {};
   predsSnap.forEach(d => {
@@ -176,7 +170,9 @@ async function updateLeaderboard() {
     const tablePts = tablePoints[d.id] || 0;
     const extraPts = userExtraPoints[d.id] || 0;
     let streakBonus = 0;
-    SCORING.STREAK_MILESTONES.forEach(m => { if ((userStreaks[d.id] || 0) >= m) streakBonus += SCORING.STREAK_BONUS; });
+    const currentStreak = userStreaks[d.id] || 0;
+    const tier = SCORING.STREAK_TIERS.find(t => currentStreak >= t.min); // tiers are ordered highest-first, so first match wins
+    if (tier) streakBonus = tier.bonus;
     rows.push({
       uid: d.id, displayName: u.displayName, email: u.email,
       matchPoints: matchPts, tablePoints: tablePts, extraPoints: extraPts,
@@ -221,24 +217,41 @@ async function scoreTablePredictions(weight) {
   return table;
 }
 
-// ---------- 5b. Live standings order (every run — powers row sorting on the site, not scoring) ----------
+// ---------- 5b. Live standings order + stats (every run — powers row sorting and stat columns, not scoring) ----------
 async function syncStandingsOrder() {
   const data = await apiFetch(`/competitions/${COMPETITION}/standings`);
   if (!data || !data.standings) return null;
   const table = data.standings.find(s => s.type === 'TOTAL').table;
-  const standingsOrder = table.sort((a, b) => a.position - b.position).map(t => t.team.name);
-  await db.collection('config').doc('current').set({ standingsOrder }, { merge: true });
-  console.log(`Standings order synced (${standingsOrder.length} teams).`);
+  const sorted = table.sort((a, b) => a.position - b.position);
+  const standingsOrder = sorted.map(t => t.team.name);
+
+  // Only the fields football-data.org's free tier actually provides — no paid-tier-only data.
+  const standingsStats = {};
+  sorted.forEach(t => {
+    standingsStats[t.team.name] = {
+      played: t.playedGames ?? null,
+      won: t.won ?? null,
+      draw: t.draw ?? null,
+      lost: t.lost ?? null,
+      goalsFor: t.goalsFor ?? null,
+      goalsAgainst: t.goalsAgainst ?? null,
+      goalDifference: t.goalDifference ?? null,
+      points: t.points ?? null,
+      form: t.form ?? null // comma-separated string like "W,D,L,W,W" when the API provides it — not guaranteed on free tier
+    };
+  });
+
+  await db.collection('config').doc('current').set({ standingsOrder, standingsStats }, { merge: true });
+  console.log(`Standings order + stats synced (${standingsOrder.length} teams).`);
   return table;
 }
 
 // ---------- 6. Badges ----------
-async function checkBadges(leaderboardRows) {
-  const fixturesSnap = await db.collection('fixtures').where('status', '==', 'FINISHED').get();
+async function checkBadges(leaderboardRows, fixturesInMemory) {
   let latestGW = 0;
   const gwFixtureIds = new Set();
-  fixturesSnap.forEach(d => { latestGW = Math.max(latestGW, d.data().gameweek); });
-  fixturesSnap.forEach(d => { if (d.data().gameweek === latestGW) gwFixtureIds.add(d.id); });
+  fixturesInMemory.forEach(f => { if (f.status === 'FINISHED') latestGW = Math.max(latestGW, f.gameweek); });
+  fixturesInMemory.forEach(f => { if (f.status === 'FINISHED' && f.gameweek === latestGW) gwFixtureIds.add(f.id); });
   if (!latestGW) return;
 
   const predsSnap = await db.collection('predictions').get();
@@ -344,9 +357,20 @@ async function generateHighlights(leaderboardRows, matches, standingsTable) {
 // ---------- Main ----------
 async function main() {
   const matches = await syncFixtures();
-  await scoreFinishedMatches();
-  await scoreGwExtras();
-  const rows = await updateLeaderboard();
+  if (!matches) { console.log('No match data returned — aborting run.'); return; }
+
+  // Built once, directly from the API response we already have in memory — this replaces
+  // 4 separate full-collection Firestore reads of `fixtures` that used to happen on every
+  // run (the actual cause of the daily quota getting blown through on a 10-min schedule).
+  const fixturesInMemory = matches.map(m => ({
+    id: String(m.id), gameweek: m.matchday, homeTeam: m.homeTeam.name, awayTeam: m.awayTeam.name,
+    kickoffUTC: m.utcDate, status: m.status,
+    homeScore: m.score.fullTime.home, awayScore: m.score.fullTime.away
+  }));
+
+  await scoreFinishedMatches(fixturesInMemory);
+  await scoreGwExtras(fixturesInMemory);
+  const rows = await updateLeaderboard(fixturesInMemory);
 
   const standingsTableLive = await syncStandingsOrder();
 
@@ -359,7 +383,7 @@ async function main() {
   // Run scoreTablePredictions(SCORING.FINAL_WEIGHT) once the season is confirmed over —
   // trigger manually via workflow_dispatch the week the season ends.
 
-  await checkBadges(rows);
+  await checkBadges(rows, fixturesInMemory);
   await generateHighlights(rows, matches, standingsTable);
   console.log('Sync complete.');
 }

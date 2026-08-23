@@ -44,7 +44,22 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   if (btn.dataset.tab === 'highlights') loadHighlights();
   if (btn.dataset.tab === 'awards') loadAwardsCommunity();
   if (btn.dataset.tab === 'profile') loadProfile();
+  if (btn.dataset.tab === 'home') loadHome();
 });
+
+async function loadHome() {
+  const list = document.getElementById('homePlayerList');
+  if (!list) return;
+  try {
+    const users = await getUsersMap();
+    const names = Object.values(users).map(u => u.displayName).filter(Boolean).sort();
+    list.innerHTML = names.length
+      ? names.map(n => `<span class="home-player-chip">${n}</span>`).join('')
+      : '<p class="empty-state">No players have signed in yet — be the first!</p>';
+  } catch (err) {
+    list.innerHTML = '<p class="empty-state">Couldn\'t load the player list right now.</p>';
+  }
+}
 
 // ---------- Fun UI: celebration flash ----------
 function celebrate(message) {
@@ -99,10 +114,9 @@ onAuthStateChanged(auth, async (user) => {
     document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
     await ensureUserDoc(user);
     document.getElementById('adminLockControls').style.display = (user.email === ADMIN_EMAIL) ? 'flex' : 'none';
-    await loadConfig();
-    await loadFixtures();
-    await loadTablePredictor();
-    await setupAwardsForm();
+    // These three don't depend on each other's results, so run them concurrently instead of
+    // one-after-another — this alone roughly halves time-to-interactive on slower connections.
+    await Promise.all([loadFixtures(), loadTablePredictor(), setupAwardsForm()]);
   } else {
     authArea.innerHTML = `<button id="signInBtn" class="btn btn-primary">Sign in with Google</button>`;
     document.getElementById('signInBtn').addEventListener('click', () => signInWithPopup(auth, provider));
@@ -111,6 +125,7 @@ onAuthStateChanged(auth, async (user) => {
   }
   loadLeaderboard();
   loadBadges();
+  loadHome();
 });
 
 async function ensureUserDoc(user) {
@@ -153,7 +168,13 @@ async function loadFixtures() {
   const fixtures = fixturesSnap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(f => f.gameweek === cfg.currentGameweek)
-    .sort((a, b) => new Date(a.kickoffUTC) - new Date(b.kickoffUTC));
+    // Unplayed matches first, finished matches after — sorted by kickoff time within each group
+    .sort((a, b) => {
+      const aFinished = a.status === 'FINISHED' ? 1 : 0;
+      const bFinished = b.status === 'FINISHED' ? 1 : 0;
+      if (aFinished !== bFinished) return aFinished - bFinished;
+      return new Date(a.kickoffUTC) - new Date(b.kickoffUTC);
+    });
 
   const tickerText = fixtures.map(f => `⚽ ${f.homeTeam} vs ${f.awayTeam}`).join('   •   ') || 'No fixtures loaded yet — check back soon';
   document.getElementById('tickerTrack').textContent = tickerText + '     ' + tickerText;
@@ -165,12 +186,26 @@ async function loadFixtures() {
     return;
   }
 
+  // PERFORMANCE FIX: previously this did one `await getDoc()` per fixture, in sequence — with
+  // ~10 fixtures a gameweek, that was 10 sequential network round trips before the page could
+  // even start rendering (the actual cause of the 5-10s blank-page reports). This does exactly
+  // one query for every prediction across all these fixtures (any player), then everything below
+  // renders synchronously from data already in memory.
+  const fixtureIds = fixtures.map(f => f.id);
+  let allPredsForGW = [];
+  if (fixtureIds.length) {
+    const predsSnap = await getDocs(query(collection(db, 'predictions'), where('fixtureId', 'in', fixtureIds.slice(0, 30))));
+    allPredsForGW = predsSnap.docs.map(d => d.data());
+  }
+  const predsByFixture = {};
+  allPredsForGW.forEach(p => { (predsByFixture[p.fixtureId] = predsByFixture[p.fixtureId] || []).push(p); });
+
   list.innerHTML = '';
   for (const fx of fixtures) {
     const locked = new Date(fx.kickoffUTC) <= new Date() || (fx.status !== 'SCHEDULED' && fx.status !== 'TIMED');
+    const fixturePreds = predsByFixture[fx.id] || [];
+    const existing = fixturePreds.find(p => p.uid === currentUser.uid) || null;
     const predRef = doc(db, 'predictions', `${currentUser.uid}_${fx.id}`);
-    const predSnap = await getDoc(predRef);
-    const existing = predSnap.exists() ? predSnap.data() : null;
 
     const card = document.createElement('div');
     card.className = 'fixture-card' + (locked ? ' locked' : '');
@@ -188,7 +223,7 @@ async function loadFixtures() {
           <span class="pred-status"></span>
         </div>
       </div>
-      <div class="crowd-pulse" data-fixture="${fx.id}"></div>
+      <div class="crowd-pulse" data-fixture="${fx.id}">${existing ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">🔒 Save your own prediction to see what everyone else thinks.</div>'}</div>
     `;
     if (!locked) {
       const saveBtn = card.querySelector('.save-pred-btn');
@@ -206,7 +241,6 @@ async function loadFixtures() {
       });
     }
     list.appendChild(card);
-    renderCrowdPulse(card.querySelector('.crowd-pulse'), fx, !!existing);
   }
 
   await setupGwExtras(fixtures);
@@ -585,27 +619,54 @@ async function loadAllTables() {
 
     const teamRows = sortedLiveTeams.length ? sortedLiveTeams : [...allTeams].sort();
     const totalTeams = teamRows.length;
+    const usingFallback = sortedLiveTeams.length === 0;
+    const stats = cfg.standingsStats || {};
+    const hasStats = Object.keys(stats).length > 0;
 
-    const header = `<tr><th>Team</th>${playerEntries.map(p => `<th>${p.name}</th>`).join('')}</tr>`;
+    const fallbackNotice = usingFallback
+      ? `<p class="empty-state" style="margin-bottom:10px;">⚠️ Live standings haven't synced to this site yet (showing alphabetical order for now) — check that the automation workflow has run recently and that <code>config/current</code> has a <code>standingsOrder</code> field in Firestore.</p>`
+      : '';
+    const scrollHint = playerEntries.length > 5
+      ? `<p class="empty-state" style="margin-bottom:8px;">↔️ ${playerEntries.length} players — scroll sideways to compare everyone. Your column is highlighted in amber, and the header row/team column stay pinned as you scroll.</p>`
+      : '';
+
+    const statHeaders = hasStats ? `<th>GD</th><th>W</th><th>L</th><th>Avg GF</th><th>Form (last 5)</th>` : '';
+    const header = `<tr><th>Team</th>${statHeaders}${playerEntries.map(p => `<th class="${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}">${p.name}</th>`).join('')}</tr>`;
+
+    const formChips = formStr => {
+      if (!formStr) return '<span class="stat-col">–</span>';
+      return `<span class="form-chips">${formStr.split(',').map(r => `<span class="form-chip ${r.trim()}">${r.trim()}</span>`).join('')}</span>`;
+    };
+
     const rows = teamRows.map((teamName, idx) => {
       const actualPos = idx + 1;
       const actualZone = positionZoneClass(actualPos, totalTeams);
+      const s = stats[teamName];
+      const statCells = hasStats
+        ? `<td class="stat-col">${s ? (s.goalDifference > 0 ? '+' : '') + (s.goalDifference ?? '–') : '–'}</td>
+           <td class="stat-col">${s?.won ?? '–'}</td>
+           <td class="stat-col">${s?.lost ?? '–'}</td>
+           <td class="stat-col">${s && s.played ? (s.goalsFor / s.played).toFixed(1) : '–'}</td>
+           <td class="stat-col">${s ? formChips(s.form) : '–'}</td>`
+        : '';
       return `
       <tr>
         <td>
           <span class="kit-dot" style="background:${typeof kitColor === 'function' ? kitColor(teamName) : '#ccc'}; margin-right:6px;"></span>${teamName}
           <span class="actual-standing ${actualZone}">#${actualPos}</span>
         </td>
+        ${statCells}
         ${playerEntries.map(p => {
           const predPos = p.positions[teamName];
           const zone = positionZoneClass(predPos, totalTeams);
-          return `<td class="pos-num ${zone}">${predPos ?? '–'}</td>`;
+          const isMine = currentUser && p.uid === currentUser.uid;
+          return `<td class="pos-num ${zone}" style="${isMine ? 'background:rgba(255,182,39,0.08);' : ''}">${predPos ?? '–'}</td>`;
         }).join('')}
       </tr>
     `;
     }).join('');
 
-    grid.innerHTML = `<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
+    grid.innerHTML = `${fallbackNotice}${scrollHint}<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
 
   } catch (err) {
     console.error('loadAllTables Error:', err);

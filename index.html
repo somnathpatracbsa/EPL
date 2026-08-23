@@ -24,7 +24,8 @@
   </header>
 
   <nav class="tabs" id="tabs">
-    <button class="tab tab-primary active" data-tab="predict">🎯 Predict Gameweek</button>
+    <button class="tab active" data-tab="home">🏠 Home</button>
+    <button class="tab tab-primary" data-tab="predict">🎯 Predict Gameweek</button>
     <button class="tab tab-primary" data-tab="table">📋 Predict League Table</button>
     <button class="tab" data-tab="allTables">🗂️ Table</button>
     <button class="tab" data-tab="community">🗣️ Games</button>
@@ -38,11 +39,45 @@
 
   <main id="app">
 
-    <section id="predict" class="panel active">
+    <section id="home" class="panel active">
+      <div class="panel-head">
+        <h1>Welcome to PL Fan Warzone</h1>
+        <p class="sub">A free prediction league for the group — predict every gameweek, call the final table, and see who actually knows football.</p>
+      </div>
+
+      <h2 class="section-title">How it works</h2>
+      <div class="home-steps">
+        <div class="home-step"><span class="icon">🎯</span><div><strong>Predict Gameweek</strong> — enter a scoreline for every match before kickoff. Once a match starts, that prediction locks.</div></div>
+        <div class="home-step"><span class="icon">📋</span><div><strong>Predict League Table</strong> — drag (or use the ▲▼ buttons on mobile) to set your predicted final standings, any time until the admin locks it.</div></div>
+        <div class="home-step"><span class="icon">🗂️</span><div><strong>Table</strong> — compare everyone's table predictions side by side against the real current standings.</div></div>
+        <div class="home-step"><span class="icon">🗣️</span><div><strong>Games</strong> — see everyone's scoreline predictions for every gameweek, with crowd sentiment and results.</div></div>
+        <div class="home-step"><span class="icon">🏆</span><div><strong>Leaderboard</strong> — everyone's total points, updated automatically about once an hour.</div></div>
+        <div class="home-step"><span class="icon">🎖️</span><div><strong>Season Awards</strong> — bragging-rights picks for Golden Boot, Golden Glove, and more.</div></div>
+        <div class="home-step"><span class="icon">👤</span><div><strong>My Profile</strong> — your full prediction history, accuracy, and current streak.</div></div>
+      </div>
+
+      <h2 class="section-title">Scoring</h2>
+      <div class="home-scoring">
+        <div class="score-rule"><span class="pts">25 pts</span> Exact scoreline correct</div>
+        <div class="score-rule"><span class="pts">10 pts</span> Correct outcome (win/draw/loss), wrong score</div>
+        <div class="score-rule"><span class="pts">+5 / +10 / +20</span> Streak bonus at 3, 5, or 10 gameweeks running with at least one correct outcome (highest tier only, not stacked)</div>
+        <div class="score-rule"><span class="pts">+15 pts each</span> Correct "highest scoring team" or "clean sheet team" gameweek extra guess</div>
+        <div class="score-rule"><span class="pts">Up to 20 pts/team</span> League table prediction — <code>max(0, 20 − 2×|predicted position − actual position|)</code> per team, checked at gameweek 19 (worth 40%) and again at season end (worth 60%)</div>
+        <div class="score-rule"><span class="pts">Honour system</span> Player-level picks (top scorer, Golden Boot, etc.) aren't auto-scored — the free data feed doesn't include individual player stats</div>
+      </div>
+
+  
+
+      <h2 class="section-title">Who's playing</h2>
+      <div id="homePlayerList" class="home-player-list"><p class="empty-state">Loading players…</p></div>
+    </section>
+
+    <section id="predict" class="panel">
       <div class="panel-head">
         <h1>Gameweek <span id="gwNumber">—</span> Predictions</h1>
         <p class="sub">Lock in your scorelines before kickoff. Once a match starts, it's locked forever. Save a prediction to unlock the crowd's take on that match.</p>
       </div>
+
       <div id="fixtureList" class="fixture-list">
         <p class="empty-state">Sign in to see this gameweek's fixtures.</p>
       </div>
@@ -183,7 +218,7 @@
   <div id="celebrate" class="celebrate"></div>
 
   <footer class="footer">
-    <p>Scores sync automatically every ~10 minutes. No admin required.</p>
+    <p>Scores sync automatically about once an hour. No admin required.</p>
   </footer>
 
   <script type="module" src="js/firebase-config.js"></script>
