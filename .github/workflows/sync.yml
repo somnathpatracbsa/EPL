@@ -2,10 +2,11 @@ name: Sync & Score EPL Predictions
 
 on:
   schedule:
-    # Every 10 minutes — as close to real-time as a free scheduled job reasonably gets.
-    # Honest caveat: GitHub's scheduler can lag a few minutes under load, and this is still
-    # polling (not a live push), so scores land within ~10-15 min of full time, not instantly.
-    - cron: '*/10 * * * *'
+    # Hourly. The previous */10-minute schedule combined with 4 redundant full-collection
+    # reads of `fixtures` per run (now fixed in sync-and-score.js) blew through Firestore's
+    # free daily quota — roughly 55,000 writes/day against a 20,000 cap, and 200,000+ reads/day
+    # against a 50,000 cap. Hourly + the read fix brings this comfortably under both caps.
+    - cron: '0 * * * *'
   workflow_dispatch: {}
 
 jobs:

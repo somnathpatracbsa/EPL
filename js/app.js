@@ -93,7 +93,7 @@ function orderTeams(teams) {
 function matchStatusLine(fx, locked) {
   if (fx.status === 'FINISHED') return `FT: ${fx.homeScore}–${fx.awayScore}`;
   if (fx.status === 'IN_PLAY' || fx.status === 'PAUSED') {
-    return `🔴 LIVE: ${fx.homeScore ?? 0}–${fx.awayScore ?? 0} (as of last sync, updates every ~10 min)`;
+    return `🔴 LIVE: ${fx.homeScore ?? 0}–${fx.awayScore ?? 0} (as of last sync — syncs about once an hour)`;
   }
   return `${new Date(fx.kickoffUTC).toLocaleString()}${locked ? ' · LOCKED' : ''}`;
 }
