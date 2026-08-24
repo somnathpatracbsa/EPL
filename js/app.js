@@ -18,20 +18,46 @@ let usersCache = null; // uid -> {displayName, email}
 let standingsOrder = null; // array of team names, current real standings order (may be null pre-season)
 let fixturesCache = null; // full fixtures collection, cached — see getAllFixtures()
 let fixturesCacheTime = 0;
-const FIXTURES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — automation only updates Firestore hourly anyway, so this stays fresh enough
+const FIXTURES_CACHE_TTL_MS = 15 * 60 * 1000; // 15 min — automation only updates Firestore hourly, so this stays fresh enough while cutting reload-driven reads a lot further
 
 // QUOTA NOTE: this used to be called separately (as an unfiltered getDocs) from three different
 // places — every page load (loadFixtures), every visit to Games (loadCommunity), and every visit
 // to My Profile (loadProfile). With ~380 season fixtures, that meant up to 3×380 Firestore reads
 // per user per session, which was the dominant cause of exhausting the free daily read quota.
 // This shared, short-lived cache means one real Firestore read serves all three for 5 minutes.
+const FIXTURES_LOCALSTORAGE_KEY = 'eplFixturesCache_v1';
+
 async function getAllFixtures(forceRefresh = false) {
   if (!forceRefresh && fixturesCache && (Date.now() - fixturesCacheTime < FIXTURES_CACHE_TTL_MS)) {
-    return fixturesCache;
+    return fixturesCache; // in-memory hit — same page load, no reload happened
   }
+
+  // QUOTA OPTIMIZATION: an in-memory cache alone resets on every page reload, which is a
+  // normal thing people do (and happened a lot during testing) — each reload was re-reading
+  // the entire ~380-doc fixtures collection again. Persisting in localStorage means a reload
+  // within the TTL window costs zero Firestore reads instead of ~380.
+  if (!forceRefresh) {
+    try {
+      const stored = JSON.parse(localStorage.getItem(FIXTURES_LOCALSTORAGE_KEY) || 'null');
+      if (stored && (Date.now() - stored.time < FIXTURES_CACHE_TTL_MS)) {
+        fixturesCache = stored.data;
+        fixturesCacheTime = stored.time;
+        return fixturesCache;
+      }
+    } catch (err) {
+      // localStorage can be unavailable/restricted (e.g. some in-app browsers) — fall through to a normal fetch
+      console.warn('localStorage fixtures cache unavailable, fetching fresh:', err);
+    }
+  }
+
   const snap = await getDocs(collection(db, 'fixtures'));
   fixturesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   fixturesCacheTime = Date.now();
+  try {
+    localStorage.setItem(FIXTURES_LOCALSTORAGE_KEY, JSON.stringify({ data: fixturesCache, time: fixturesCacheTime }));
+  } catch (err) {
+    // Non-fatal — worst case we just don't get the reload-persistence benefit this session
+  }
   return fixturesCache;
 }
 
@@ -176,11 +202,30 @@ async function ensureUserDoc(user) {
   }
 }
 
+const USERS_LOCALSTORAGE_KEY = 'eplUsersCache_v1';
+const USERS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 min — the roster of who's playing changes rarely
+
 async function getUsersMap() {
-  if (usersCache) return usersCache;
+  if (usersCache) return usersCache; // in-memory hit, same page load
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(USERS_LOCALSTORAGE_KEY) || 'null');
+    if (stored && (Date.now() - stored.time < USERS_CACHE_TTL_MS)) {
+      usersCache = stored.data;
+      return usersCache;
+    }
+  } catch (err) {
+    console.warn('localStorage users cache unavailable, fetching fresh:', err);
+  }
+
   const snap = await getDocs(collection(db, 'users'));
   usersCache = {};
   snap.forEach(d => { usersCache[d.id] = d.data(); });
+  try {
+    localStorage.setItem(USERS_LOCALSTORAGE_KEY, JSON.stringify({ data: usersCache, time: Date.now() }));
+  } catch (err) {
+    // Non-fatal
+  }
   return usersCache;
 }
 
@@ -462,6 +507,8 @@ async function loadTablePredictor() {
   };
  } catch (err) {
   console.error('loadTablePredictor error:', err);
+  const loadingMsg = document.getElementById('tableLoadingMsg');
+  if (loadingMsg) loadingMsg.style.display = 'none';
   document.getElementById('tableList').innerHTML = '';
   document.getElementById('saveTableBtn').style.display = 'none';
   const banner = document.getElementById('tableLockBanner');
@@ -471,6 +518,9 @@ async function loadTablePredictor() {
 }
 
 function renderTableList(teams, locked) {
+  const loadingMsg = document.getElementById('tableLoadingMsg');
+  if (loadingMsg) loadingMsg.style.display = 'none';
+
   const listEl = document.getElementById('tableList');
   listEl.innerHTML = '';
   teams.forEach((team) => {

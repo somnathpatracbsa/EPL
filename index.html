@@ -71,9 +71,6 @@
         <div class="score-rule"><span class="pts">Honour system</span> Player-level picks (top scorer, Golden Boot, etc.) aren't auto-scored — the free data feed doesn't include individual player stats</div>
       </div>
 
-      <h2 class="section-title">A known issue, now fixed</h2>
-      <p class="sub">Some players reported the Predict League Table area taking 5-10 seconds to load or appearing blank. That was a real bug — the page was making one slow network request per fixture, one after another, instead of one combined request. It's fixed now; if it's still slow for you, try a hard refresh (Ctrl+Shift+R / Cmd+Shift+R).</p>
-
       <h2 class="section-title">Who's playing</h2>
       <div id="homePlayerList" class="home-player-list"><p class="empty-state">Loading players…</p></div>
     </section>
@@ -120,8 +117,9 @@
         <button id="lockTableBtn" class="btn btn-secondary">🔒 Lock predictions for everyone</button>
         <button id="unlockTableBtn" class="btn btn-secondary">🔓 Unlock predictions</button>
       </div>
+      <p id="tableLoadingMsg" class="empty-state">⏳ Please wait a moment for the table to load…</p>
       <ol id="tableList" class="table-list"></ol>
-      <button id="saveTableBtn" class="btn btn-primary">Save My Table</button>
+      <button id="saveTableBtn" class="btn btn-primary" style="display:none;">Save My Table</button>
     </section>
 
     <section id="allTables" class="panel">

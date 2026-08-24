@@ -84,6 +84,7 @@ async function scoreFinishedMatches(fixturesInMemory) {
   });
   if (scoredCount) await batch.commit();
   console.log(`Scored ${scoredCount} predictions.`);
+  return scoredCount;
 }
 
 // ---------- 3. Score gameweek extras (top scoring team / clean sheet team) ----------
@@ -96,6 +97,7 @@ async function scoreGwExtras(allFixtures) {
     .filter(([, fx]) => fx.every(f => f.status === 'FINISHED'))
     .map(([gw]) => Number(gw));
 
+  let totalScored = 0;
   for (const gw of completedGWs) {
     const fx = byGW[gw];
     const teamGoals = {}; // team -> goals scored that gameweek
@@ -121,8 +123,10 @@ async function scoreGwExtras(allFixtures) {
       batch.update(d.ref, { points, scored: true });
     });
     await batch.commit();
+    totalScored += extrasSnap.size;
     console.log(`Scored gameweek ${gw} extras for ${extrasSnap.size} entries.`);
   }
+  return totalScored;
 }
 
 // ---------- 4. Rebuild leaderboard ----------
@@ -350,23 +354,46 @@ async function main() {
     homeScore: m.score.fullTime.home, awayScore: m.score.fullTime.away
   }));
 
-  await scoreFinishedMatches(fixturesInMemory);
-  await scoreGwExtras(fixturesInMemory);
-  const rows = await updateLeaderboard(fixturesInMemory);
-
+  const matchesScored = await scoreFinishedMatches(fixturesInMemory);
+  const extrasScored = await scoreGwExtras(fixturesInMemory);
   const standingsTableLive = await syncStandingsOrder();
 
-  const configSnap = await db.collection('config').doc('current').get();
-  const currentGW = configSnap.exists ? configSnap.data().currentGameweek : null;
+  // config/current read once, used both for the midseason-checkpoint check and to decide
+  // whether the expensive full-collection leaderboard rebuild is actually necessary this run.
+  const configRef = db.collection('config').doc('current');
+  const configSnap = await configRef.get();
+  const configData = configSnap.exists ? configSnap.data() : {};
+  const currentGW = configData.currentGameweek ?? null;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const alreadyRebuiltToday = configData.lastLeaderboardRebuildDate === todayStr;
+
+  // QUOTA OPTIMIZATION: updateLeaderboard() (and the badges/highlights steps that depend on
+  // its output) do full reads of users/predictions/tablePredictions/gwExtraPredictions —
+  // by far the most expensive step in this script. On an hourly schedule that's 24 full
+  // rebuilds a day, nearly all of them on hours where literally nothing changed. We only
+  // need to rebuild when something was actually scored this run, or at least once a day as
+  // a safety net (so the leaderboard/badges/highlights never go more than 24h stale even if
+  // something unusual happens, e.g. a mid-gameweek data correction).
+  const somethingChanged = matchesScored > 0 || extrasScored > 0;
+  const shouldRebuild = somethingChanged || !alreadyRebuiltToday;
+
   let standingsTable = standingsTableLive;
   if (currentGW === SCORING.MIDSEASON_GAMEWEEK) {
     standingsTable = await scoreTablePredictions(SCORING.MIDSEASON_WEIGHT);
   }
+
+  if (shouldRebuild) {
+    const rows = await updateLeaderboard(fixturesInMemory);
+    await checkBadges(rows, fixturesInMemory);
+    await generateHighlights(rows, matches, standingsTable);
+    await configRef.set({ lastLeaderboardRebuildDate: todayStr }, { merge: true });
+    console.log(`Leaderboard rebuilt (reason: ${somethingChanged ? `${matchesScored} match(es) + ${extrasScored} extra(s) scored` : 'daily safety-net refresh'}).`);
+  } else {
+    console.log('Nothing scored this run and already rebuilt today — skipping the expensive leaderboard/badges/highlights rebuild to save Firestore reads.');
+  }
   // Run scoreTablePredictions(SCORING.FINAL_WEIGHT) once the season is confirmed over —
   // trigger manually via workflow_dispatch the week the season ends.
 
-  await checkBadges(rows, fixturesInMemory);
-  await generateHighlights(rows, matches, standingsTable);
   console.log('Sync complete.');
 }
 
