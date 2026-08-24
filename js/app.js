@@ -16,6 +16,24 @@ let currentUser = null;
 let currentGW = null;
 let usersCache = null; // uid -> {displayName, email}
 let standingsOrder = null; // array of team names, current real standings order (may be null pre-season)
+let fixturesCache = null; // full fixtures collection, cached — see getAllFixtures()
+let fixturesCacheTime = 0;
+const FIXTURES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — automation only updates Firestore hourly anyway, so this stays fresh enough
+
+// QUOTA NOTE: this used to be called separately (as an unfiltered getDocs) from three different
+// places — every page load (loadFixtures), every visit to Games (loadCommunity), and every visit
+// to My Profile (loadProfile). With ~380 season fixtures, that meant up to 3×380 Firestore reads
+// per user per session, which was the dominant cause of exhausting the free daily read quota.
+// This shared, short-lived cache means one real Firestore read serves all three for 5 minutes.
+async function getAllFixtures(forceRefresh = false) {
+  if (!forceRefresh && fixturesCache && (Date.now() - fixturesCacheTime < FIXTURES_CACHE_TTL_MS)) {
+    return fixturesCache;
+  }
+  const snap = await getDocs(collection(db, 'fixtures'));
+  fixturesCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  fixturesCacheTime = Date.now();
+  return fixturesCache;
+}
 
 const PL_TEAMS_DEFAULT = [
   "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton", "Chelsea",
@@ -28,6 +46,17 @@ const BADGE_ICONS = {
   'Oracle of the Week': '🔮', 'Perfect Predictor': '🎯', 'Giant Killer': '⚡',
   'Iron Streak': '🔥', 'Table Topper': '👑'
 };
+
+// ---------- In-app browser detection (best effort — UA strings for these aren't 100% reliable, ----------
+// ---------- so this is a helpful nudge, not a hard block) ----------
+(function detectInAppBrowser() {
+  const ua = navigator.userAgent || '';
+  const isInApp = /WhatsApp|Instagram|FBAN|FBAV|Line\//i.test(ua);
+  if (isInApp) {
+    const el = document.getElementById('inAppBrowserWarning');
+    if (el) el.style.display = 'block';
+  }
+})();
 
 // ---------- Tabs ----------
 document.getElementById('tabs').addEventListener('click', (e) => {
@@ -112,11 +141,22 @@ onAuthStateChanged(auth, async (user) => {
       <button id="signOutBtn" class="btn btn-secondary">Sign out</button>
     `;
     document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
-    await ensureUserDoc(user);
+    try {
+      await ensureUserDoc(user);
+    } catch (err) {
+      console.error('ensureUserDoc error:', err);
+      // Non-fatal — still try to load the tabs below even if the profile write failed
+    }
     document.getElementById('adminLockControls').style.display = (user.email === ADMIN_EMAIL) ? 'flex' : 'none';
     // These three don't depend on each other's results, so run them concurrently instead of
     // one-after-another — this alone roughly halves time-to-interactive on slower connections.
-    await Promise.all([loadFixtures(), loadTablePredictor(), setupAwardsForm()]);
+    // Each of the three now handles its own errors internally and renders a visible message on
+    // failure, so one broken load can no longer leave another tab silently stuck/blank.
+    try {
+      await Promise.all([loadFixtures(), loadTablePredictor(), setupAwardsForm()]);
+    } catch (err) {
+      console.error('Sign-in load sequence error:', err);
+    }
   } else {
     authArea.innerHTML = `<button id="signInBtn" class="btn btn-primary">Sign in with Google</button>`;
     document.getElementById('signInBtn').addEventListener('click', () => signInWithPopup(auth, provider));
@@ -163,16 +203,20 @@ async function loadConfig() {
 
 // ---------- Predict Gameweek tab ----------
 async function loadFixtures() {
+ try {
   const cfg = await loadConfig();
-  const fixturesSnap = await getDocs(collection(db, 'fixtures'));
-  const fixtures = fixturesSnap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
+  const allFixtures = await getAllFixtures();
+  const fixtures = allFixtures
     .filter(f => f.gameweek === cfg.currentGameweek)
-    // Unplayed matches first, finished matches after — sorted by kickoff time within each group
+    // Not-yet-started first, then live, then finished — sorted by kickoff time within each tier
     .sort((a, b) => {
-      const aFinished = a.status === 'FINISHED' ? 1 : 0;
-      const bFinished = b.status === 'FINISHED' ? 1 : 0;
-      if (aFinished !== bFinished) return aFinished - bFinished;
+      const priority = status => {
+        if (status === 'IN_PLAY' || status === 'PAUSED') return 1;
+        if (status === 'FINISHED') return 2;
+        return 0; // SCHEDULED, TIMED, etc.
+      };
+      const diff = priority(a.status) - priority(b.status);
+      if (diff !== 0) return diff;
       return new Date(a.kickoffUTC) - new Date(b.kickoffUTC);
     });
 
@@ -244,6 +288,10 @@ async function loadFixtures() {
   }
 
   await setupGwExtras(fixtures);
+ } catch (err) {
+  console.error('loadFixtures error:', err);
+  document.getElementById('fixtureList').innerHTML = `<p class="empty-state">⚠️ Couldn't load this gameweek's fixtures. Try refreshing the page. (Error: ${err.message || err.code || 'unknown'})</p>`;
+ }
 }
 
 function computeCrowdStats(predictionDocs, fixture) {
@@ -389,6 +437,7 @@ async function setupGwExtras(fixtures) {
 
 // ---------- Predict League Table tab ----------
 async function loadTablePredictor() {
+ try {
   const cfg = await loadConfig();
   const isAdmin = currentUser.email === ADMIN_EMAIL;
   const locked = cfg.tableLocked && !isAdmin;
@@ -411,6 +460,14 @@ async function loadTablePredictor() {
     celebrate('Table predictions unlocked 🔓');
     loadTablePredictor();
   };
+ } catch (err) {
+  console.error('loadTablePredictor error:', err);
+  document.getElementById('tableList').innerHTML = '';
+  document.getElementById('saveTableBtn').style.display = 'none';
+  const banner = document.getElementById('tableLockBanner');
+  banner.style.display = 'block';
+  banner.textContent = `⚠️ Couldn't load the table predictor. Try refreshing the page. (Error: ${err.message || err.code || 'unknown'})`;
+ }
 }
 
 function renderTableList(teams, locked) {
@@ -546,6 +603,13 @@ function getDragAfterElement(container, y) {
 document.getElementById('saveTableBtn').addEventListener('click', async () => {
   if (!currentUser) return;
   const items = [...document.getElementById('tableList').children];
+  // Guard against exactly the failure mode that corrupted 5 users' data: the list rendering
+  // silently failed, leaving it empty on screen, but Save was still clickable. Never write an
+  // incomplete list to Firestore — tell the user plainly and make them reload instead.
+  if (items.length < PL_TEAMS_DEFAULT.length) {
+    alert(`Something didn't load correctly — only ${items.length} of ${PL_TEAMS_DEFAULT.length} teams are showing. Please refresh the page before saving so your prediction doesn't get saved incomplete.`);
+    return;
+  }
   const teams = items.map((li, i) => ({ team: li.dataset.team, predictedPosition: i + 1 }));
   await setDoc(doc(db, 'tablePredictions', currentUser.uid), { uid: currentUser.uid, teams, submittedAt: serverTimestamp() });
   celebrate('Table prediction saved! 📋');
@@ -603,7 +667,7 @@ async function loadAllTables() {
     const normalize = name => String(name || '').toLowerCase().replace(/fc|afc|&/g, '').replace(/[^a-z0-9]/g, '').trim();
 
     // cfg.standingsOrder comes straight from automation/sync-and-score.js's syncStandingsOrder(),
-    // which writes it to config/current every ~10 min run — this is the real current league order.
+    // which writes it to config/current on every hourly run — this is the real current league order.
     let sortedLiveTeams = [];
     if (cfg.standingsOrder && cfg.standingsOrder.length) {
       const predictionTeamsArray = [...allTeams];
@@ -620,8 +684,6 @@ async function loadAllTables() {
     const teamRows = sortedLiveTeams.length ? sortedLiveTeams : [...allTeams].sort();
     const totalTeams = teamRows.length;
     const usingFallback = sortedLiveTeams.length === 0;
-    const stats = cfg.standingsStats || {};
-    const hasStats = Object.keys(stats).length > 0;
 
     const fallbackNotice = usingFallback
       ? `<p class="empty-state" style="margin-bottom:10px;">⚠️ Live standings haven't synced to this site yet (showing alphabetical order for now) — check that the automation workflow has run recently and that <code>config/current</code> has a <code>standingsOrder</code> field in Firestore.</p>`
@@ -630,32 +692,17 @@ async function loadAllTables() {
       ? `<p class="empty-state" style="margin-bottom:8px;">↔️ ${playerEntries.length} players — scroll sideways to compare everyone. Your column is highlighted in amber, and the header row/team column stay pinned as you scroll.</p>`
       : '';
 
-    const statHeaders = hasStats ? `<th>GD</th><th>W</th><th>L</th><th>Avg GF</th><th>Form (last 5)</th>` : '';
-    const header = `<tr><th>Team</th>${statHeaders}${playerEntries.map(p => `<th class="${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}">${p.name}</th>`).join('')}</tr>`;
-
-    const formChips = formStr => {
-      if (!formStr) return '<span class="stat-col">–</span>';
-      return `<span class="form-chips">${formStr.split(',').map(r => `<span class="form-chip ${r.trim()}">${r.trim()}</span>`).join('')}</span>`;
-    };
+    const header = `<tr><th>Team</th>${playerEntries.map(p => `<th class="${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}">${p.name}</th>`).join('')}</tr>`;
 
     const rows = teamRows.map((teamName, idx) => {
       const actualPos = idx + 1;
       const actualZone = positionZoneClass(actualPos, totalTeams);
-      const s = stats[teamName];
-      const statCells = hasStats
-        ? `<td class="stat-col">${s ? (s.goalDifference > 0 ? '+' : '') + (s.goalDifference ?? '–') : '–'}</td>
-           <td class="stat-col">${s?.won ?? '–'}</td>
-           <td class="stat-col">${s?.lost ?? '–'}</td>
-           <td class="stat-col">${s && s.played ? (s.goalsFor / s.played).toFixed(1) : '–'}</td>
-           <td class="stat-col">${s ? formChips(s.form) : '–'}</td>`
-        : '';
       return `
       <tr>
         <td>
           <span class="kit-dot" style="background:${typeof kitColor === 'function' ? kitColor(teamName) : '#ccc'}; margin-right:6px;"></span>${teamName}
           <span class="actual-standing ${actualZone}">#${actualPos}</span>
         </td>
-        ${statCells}
         ${playerEntries.map(p => {
           const predPos = p.positions[teamName];
           const zone = positionZoneClass(predPos, totalTeams);
@@ -676,36 +723,60 @@ async function loadAllTables() {
 
 
 
-// ---------- Community Game Predictions tab (all gameweeks, newest first) ----------
-async function loadCommunity() {
+// ---------- Community Game Predictions tab (recent gameweeks by default, newest first) ----------
+const RECENT_GW_WINDOW = 3; // how many gameweeks show by default — keeps the predictions read small and bounded regardless of season size
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function fetchPredictionsForFixtureIds(fixtureIds) {
+  if (!fixtureIds.length) return [];
+  // Firestore 'in' queries cap at 30 values, so chunk and merge — still far cheaper than
+  // reading the entire predictions collection, which only grows as the season goes on.
+  const chunks = chunk(fixtureIds, 30);
+  const results = await Promise.all(
+    chunks.map(c => getDocs(query(collection(db, 'predictions'), where('fixtureId', 'in', c))))
+  );
+  return results.flatMap(snap => snap.docs.map(d => d.data()));
+}
+
+async function loadCommunity(showAll = false) {
   const grid = document.getElementById('communityGrid');
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
-  const [fixturesSnap, predsSnap, users] = await Promise.all([
-    getDocs(collection(db, 'fixtures')), getDocs(collection(db, 'predictions')), getUsersMap()
-  ]);
-  const fixtures = fixturesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const [fixtures, users] = await Promise.all([getAllFixtures(), getUsersMap()]);
   if (!fixtures.length) { grid.innerHTML = '<p class="empty-state">No fixtures synced yet.</p>'; return; }
 
   const byGW = {};
   fixtures.forEach(f => { (byGW[f.gameweek] = byGW[f.gameweek] || []).push(f); });
 
-  // 1. Determine current gameweek based on fixtures already played/started
   const playedFixtures = fixtures.filter(f => f.status === 'FINISHED' || f.status === 'IN_PLAY' || f.status === 'PAUSED');
-  const currentGW = playedFixtures.length 
+  const currentGWNum = playedFixtures.length
     ? Math.max(...playedFixtures.map(f => Number(f.gameweek)))
-    : Math.min(...fixtures.map(f => Number(f.gameweek))); // Fallback to GW1 if season hasn't started
+    : Math.min(...fixtures.map(f => Number(f.gameweek)));
 
-  // 2. Filter gwNumbers so it only includes current and past gameweeks
-  const gwNumbers = Object.keys(byGW)
-    .map(Number)
-    .filter(gw => gw <= currentGW)
-    .sort((a, b) => b - a);
+  const allGwNumbers = Object.keys(byGW).map(Number).filter(gw => gw <= currentGWNum).sort((a, b) => b - a);
+  const gwNumbers = showAll ? allGwNumbers : allGwNumbers.slice(0, RECENT_GW_WINDOW);
 
-  const preds = predsSnap.docs.map(d => d.data());
+  const visibleFixtureIds = gwNumbers.flatMap(gw => byGW[gw].map(f => f.id));
+  const preds = await fetchPredictionsForFixtureIds(visibleFixtureIds);
   const predsByFixture = {};
   preds.forEach(p => { (predsByFixture[p.fixtureId] = predsByFixture[p.fixtureId] || []).push(p); });
 
   grid.innerHTML = '';
+
+  if (!showAll && allGwNumbers.length > RECENT_GW_WINDOW) {
+    const loadMoreBtn = document.createElement('button');
+    loadMoreBtn.className = 'btn btn-secondary';
+    loadMoreBtn.style.marginBottom = '16px';
+    loadMoreBtn.textContent = `Show all ${allGwNumbers.length} gameweeks (currently showing the last ${RECENT_GW_WINDOW})`;
+    loadMoreBtn.onclick = () => loadCommunity(true);
+    grid.appendChild(loadMoreBtn);
+  }
+
   gwNumbers.forEach(gw => {
     const sectionHeader = document.createElement('div');
     sectionHeader.className = 'gw-section-header';
@@ -772,14 +843,19 @@ async function setupAwardsForm() {
   sel.innerHTML = PL_TEAMS_DEFAULT.map(t => `<option value="${t}">${t}</option>`).join('');
   if (!currentUser) return;
   const ref = doc(db, 'seasonPredictions', currentUser.uid);
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const d = snap.data();
-    document.getElementById('awardGoldenBoot').value = d.goldenBoot || '';
-    document.getElementById('awardGoldenGlove').value = d.goldenGlove || '';
-    document.getElementById('awardManager').value = d.managerOfYear || '';
-    document.getElementById('awardRedCards').value = d.mostRedCards || '';
-    sel.value = d.mostCleanSheetsTeam || PL_TEAMS_DEFAULT[0];
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const d = snap.data();
+      document.getElementById('awardGoldenBoot').value = d.goldenBoot || '';
+      document.getElementById('awardGoldenGlove').value = d.goldenGlove || '';
+      document.getElementById('awardManager').value = d.managerOfYear || '';
+      document.getElementById('awardRedCards').value = d.mostRedCards || '';
+      sel.value = d.mostCleanSheetsTeam || PL_TEAMS_DEFAULT[0];
+    }
+  } catch (err) {
+    console.error('setupAwardsForm prefill error:', err);
+    // Non-fatal — the form still works for a fresh submission even if we couldn't preload past picks
   }
   document.getElementById('saveAwardsBtn').onclick = async () => {
     await setDoc(ref, {
@@ -889,13 +965,13 @@ async function loadProfile() {
   if (!currentUser) return;
   document.getElementById('profileName').textContent = `${currentUser.displayName}'s Profile`;
 
-  const [predsSnap, fixturesSnap, lbSnap] = await Promise.all([
+  const [predsSnap, allFixtures, lbSnap] = await Promise.all([
     getDocs(query(collection(db, 'predictions'), where('uid', '==', currentUser.uid))),
-    getDocs(collection(db, 'fixtures')),
+    getAllFixtures(),
     getDoc(doc(db, 'leaderboard', currentUser.uid))
   ]);
   const fixturesById = {};
-  fixturesSnap.forEach(d => { fixturesById[d.id] = d.data(); });
+  allFixtures.forEach(f => { fixturesById[f.id] = f; });
 
   const preds = predsSnap.docs.map(d => d.data()).sort((a, b) => {
     const fa = fixturesById[a.fixtureId], fb = fixturesById[b.fixtureId];

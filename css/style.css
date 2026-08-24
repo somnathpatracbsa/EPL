@@ -129,6 +129,15 @@ body {
 .btn-primary { background: var(--amber); color: var(--pitch-night); }
 .btn-secondary { background: rgba(255,255,255,0.08); color: var(--chalk); }
 
+.in-app-warning {
+  background: rgba(230, 69, 69, 0.15);
+  border-bottom: 1px solid var(--card-red);
+  color: #ff9b9b;
+  padding: 10px 20px;
+  font-size: 13px;
+  text-align: center;
+}
+
 /* ---------- Layout ---------- */
 main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .panel { display: none; }
@@ -330,12 +339,6 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 }
 .matrix-table th:first-child { z-index: 3; } /* top-left corner: sticky in both directions, needs to stay above everything */
 .matrix-table th.own-col { background: rgba(255, 182, 39, 0.18); color: var(--amber); }
-.matrix-table td.stat-col { color: var(--chalk-dim); font-family: var(--font-mono); font-size: 11px; min-width: 50px; }
-.form-chips { display: inline-flex; gap: 2px; }
-.form-chip { display: inline-block; width: 16px; height: 16px; line-height: 16px; border-radius: 3px; font-size: 9px; font-weight: 700; color: var(--pitch-night); }
-.form-chip.W { background: var(--turf-bright); }
-.form-chip.D { background: var(--chalk-dim); }
-.form-chip.L { background: var(--card-red); }
 .matrix-table td.pos-num { font-family: var(--font-mono); font-weight: 700; color: var(--amber); }
 
 /* ---------- Gameweek grouping in Community Game Predictions ---------- */

@@ -217,32 +217,14 @@ async function scoreTablePredictions(weight) {
   return table;
 }
 
-// ---------- 5b. Live standings order + stats (every run — powers row sorting and stat columns, not scoring) ----------
+// ---------- 5b. Live standings order (every run — powers row sorting on the site, not scoring) ----------
 async function syncStandingsOrder() {
   const data = await apiFetch(`/competitions/${COMPETITION}/standings`);
   if (!data || !data.standings) return null;
   const table = data.standings.find(s => s.type === 'TOTAL').table;
-  const sorted = table.sort((a, b) => a.position - b.position);
-  const standingsOrder = sorted.map(t => t.team.name);
-
-  // Only the fields football-data.org's free tier actually provides — no paid-tier-only data.
-  const standingsStats = {};
-  sorted.forEach(t => {
-    standingsStats[t.team.name] = {
-      played: t.playedGames ?? null,
-      won: t.won ?? null,
-      draw: t.draw ?? null,
-      lost: t.lost ?? null,
-      goalsFor: t.goalsFor ?? null,
-      goalsAgainst: t.goalsAgainst ?? null,
-      goalDifference: t.goalDifference ?? null,
-      points: t.points ?? null,
-      form: t.form ?? null // comma-separated string like "W,D,L,W,W" when the API provides it — not guaranteed on free tier
-    };
-  });
-
-  await db.collection('config').doc('current').set({ standingsOrder, standingsStats }, { merge: true });
-  console.log(`Standings order + stats synced (${standingsOrder.length} teams).`);
+  const standingsOrder = table.sort((a, b) => a.position - b.position).map(t => t.team.name);
+  await db.collection('config').doc('current').set({ standingsOrder }, { merge: true });
+  console.log(`Standings order synced (${standingsOrder.length} teams).`);
   return table;
 }
 
