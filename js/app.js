@@ -797,16 +797,18 @@ async function loadCommunity(showAll = false) {
   const grid = document.getElementById('communityGrid');
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
 
-  const [fixtures, users] = await Promise.all([getAllFixtures(), getUsersMap()]);
+  const [fixtures, users, cfg] = await Promise.all([getAllFixtures(), getUsersMap(), loadConfig()]);
   if (!fixtures.length) { grid.innerHTML = '<p class="empty-state">No fixtures synced yet.</p>'; return; }
 
   const byGW = {};
   fixtures.forEach(f => { (byGW[f.gameweek] = byGW[f.gameweek] || []).push(f); });
 
-  const playedFixtures = fixtures.filter(f => f.status === 'FINISHED' || f.status === 'IN_PLAY' || f.status === 'PAUSED');
-  const currentGWNum = playedFixtures.length
-    ? Math.max(...playedFixtures.map(f => Number(f.gameweek)))
-    : Math.min(...fixtures.map(f => Number(f.gameweek)));
+  // Use the same "current gameweek" the rest of the site uses (config.currentGameweek, set by
+  // the automation script) rather than deriving a separate one here from which matches have
+  // actually kicked off — that mismatch was why this tab lagged a gameweek behind Predict
+  // Gameweek: the config value advances as soon as the previous gameweek fully finishes, even
+  // before the next one has started.
+  const currentGWNum = cfg.currentGameweek || Math.min(...fixtures.map(f => Number(f.gameweek)));
 
   const allGwNumbers = Object.keys(byGW).map(Number).filter(gw => gw <= currentGWNum).sort((a, b) => b - a);
   const gwNumbers = showAll ? allGwNumbers : allGwNumbers.slice(0, RECENT_GW_WINDOW);
