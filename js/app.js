@@ -892,6 +892,24 @@ async function setupAwardsForm() {
   const sel = document.getElementById('awardCleanSheetTeam');
   sel.innerHTML = PL_TEAMS_DEFAULT.map(t => `<option value="${t}">${t}</option>`).join('');
   if (!currentUser) return;
+
+  const isAdmin = currentUser.email === ADMIN_EMAIL;
+  const cfg = await loadConfig();
+  const locked = cfg.awardsLocked && !isAdmin;
+
+  document.getElementById('awardsAdminLockControls').style.display = isAdmin ? 'flex' : 'none';
+  const banner = document.getElementById('awardsLockBanner');
+  if (cfg.awardsLocked) {
+    banner.style.display = 'block';
+    banner.textContent = '🔒 Season Award predictions are currently locked by the admin.';
+  } else {
+    banner.style.display = 'none';
+  }
+
+  const inputs = ['awardGoldenBoot', 'awardGoldenGlove', 'awardManager', 'awardRedCards', 'awardCleanSheetTeam'];
+  inputs.forEach(id => { document.getElementById(id).disabled = locked; });
+  document.getElementById('saveAwardsBtn').style.display = locked ? 'none' : 'inline-block';
+
   const ref = doc(db, 'seasonPredictions', currentUser.uid);
   try {
     const snap = await getDoc(ref);
@@ -907,6 +925,18 @@ async function setupAwardsForm() {
     console.error('setupAwardsForm prefill error:', err);
     // Non-fatal — the form still works for a fresh submission even if we couldn't preload past picks
   }
+
+  document.getElementById('lockAwardsBtn').onclick = async () => {
+    await setDoc(doc(db, 'config', 'current'), { awardsLocked: true }, { merge: true });
+    celebrate('Season Awards locked 🔒');
+    setupAwardsForm();
+  };
+  document.getElementById('unlockAwardsBtn').onclick = async () => {
+    await setDoc(doc(db, 'config', 'current'), { awardsLocked: false }, { merge: true });
+    celebrate('Season Awards unlocked 🔓');
+    setupAwardsForm();
+  };
+
   document.getElementById('saveAwardsBtn').onclick = async () => {
     await setDoc(ref, {
       uid: currentUser.uid,
@@ -926,7 +956,7 @@ async function setupAwardsForm() {
 async function loadAwardsCommunity() {
   const container = document.getElementById('awardsCommunity');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
-  const snap = await getDocs(collection(db, 'seasonPredictions'));
+  const [snap, users] = await Promise.all([getDocs(collection(db, 'seasonPredictions')), getUsersMap()]);
   if (snap.empty) { container.innerHTML = '<p class="empty-state">No predictions submitted yet.</p>'; return; }
 
   const categories = [
@@ -936,45 +966,80 @@ async function loadAwardsCommunity() {
   ];
   container.innerHTML = '';
   categories.forEach(([field, label]) => {
-    const tally = {};
+    const tally = {}; // pick value -> array of display names who picked it
     snap.forEach(d => {
       const val = (d.data()[field] || '').trim();
       if (!val) return;
-      tally[val] = (tally[val] || 0) + 1;
+      const pickerName = users[d.id]?.displayName || 'Unknown player';
+      (tally[val] = tally[val] || []).push(pickerName);
     });
-    const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+    const sorted = Object.entries(tally).sort((a, b) => b[1].length - a[1].length);
     const div = document.createElement('div');
     div.className = 'award-tally';
     div.innerHTML = `<h4>${label}</h4>` + (sorted.length
-      ? sorted.map(([name, count]) => `<div class="pick-row"><span>${name}</span><span>${count} pick${count === 1 ? '' : 's'}</span></div>`).join('')
+      ? sorted.map(([pick, names]) => `
+          <div class="pick-row">
+            <span>${pick}</span>
+            <span>${names.length} pick${names.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="pick-names">${names.join(', ')}</div>
+        `).join('')
       : '<p class="empty-state">No picks yet</p>');
     container.appendChild(div);
   });
 }
 
 // ---------- Player Profiles tab ----------
-let playersCache = null;
+let warzonePlayersCache = null;
 async function loadPlayers() {
   const grid = document.getElementById('playersGrid');
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
-  if (!playersCache) {
-    const snap = await getDocs(collection(db, 'players'));
-    playersCache = snap.docs.map(d => d.data());
+  try {
+    if (!warzonePlayersCache) {
+      const [users, lbSnap, badgesSnap] = await Promise.all([
+        getUsersMap(),
+        getDocs(collection(db, 'leaderboard')),
+        getDocs(collection(db, 'badges'))
+      ]);
+      const lbByUid = {};
+      lbSnap.forEach(d => { lbByUid[d.id] = d.data(); });
+      const badgeCountByUid = {};
+      badgesSnap.forEach(d => { badgeCountByUid[d.id] = (d.data().badges || []).length; });
+
+      warzonePlayersCache = Object.entries(users).map(([uid, u]) => {
+        const lb = lbByUid[uid] || {};
+        return {
+          uid,
+          name: u.displayName || 'Unknown player',
+          totalPoints: lb.totalPoints || 0,
+          rank: lb.rank || null,
+          currentStreak: lb.currentStreak || 0,
+          matchPoints: lb.matchPoints || 0,
+          tablePoints: lb.tablePoints || 0,
+          extraPoints: lb.extraPoints || 0,
+          badgeCount: badgeCountByUid[uid] || 0
+        };
+      }).sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
+    }
+    renderPlayers(warzonePlayersCache);
+    document.getElementById('playerSearch').oninput = (e) => {
+      const q = e.target.value.toLowerCase();
+      renderPlayers(warzonePlayersCache.filter(p => p.name.toLowerCase().includes(q)));
+    };
+  } catch (err) {
+    console.error('loadPlayers error:', err);
+    grid.innerHTML = `<p class="empty-state">⚠️ Couldn't load players right now. (Error: ${err.message || err.code || 'unknown'})</p>`;
   }
-  renderPlayers(playersCache);
-  document.getElementById('playerSearch').oninput = (e) => {
-    const q = e.target.value.toLowerCase();
-    renderPlayers(playersCache.filter(p => (p.name || '').toLowerCase().includes(q) || (p.team || '').toLowerCase().includes(q)));
-  };
 }
+
 function renderPlayers(list) {
   const grid = document.getElementById('playersGrid');
-  if (!list.length) { grid.innerHTML = '<p class="empty-state">No squad data synced yet — this populates from the weekly squad-sync job.</p>'; return; }
+  if (!list.length) { grid.innerHTML = '<p class="empty-state">No one has signed in yet — be the first!</p>'; return; }
   grid.innerHTML = list.map(p => `
     <div class="player-card">
-      <div class="name">${p.name}${p.shirtNumber ? ` <span style="color:var(--chalk-dim); font-family:var(--font-mono); font-size:11px;">#${p.shirtNumber}</span>` : ''}</div>
-      <div class="meta">${p.team || ''}</div>
-      <div class="meta">${p.position || ''} ${p.nationality ? '· ' + p.nationality : ''}</div>
+      <div class="name">${p.name}${p.rank ? ` <span style="color:var(--amber); font-family:var(--font-mono); font-size:11px;">#${p.rank}</span>` : ''}</div>
+      <div class="meta">${p.totalPoints} pts total ${p.badgeCount ? `· 🥇 ${p.badgeCount}` : ''}</div>
+      <div class="meta">🎯 ${p.matchPoints} · 📋 ${p.tablePoints} · ⚡ ${p.extraPoints} ${p.currentStreak ? `· 🔥 ${p.currentStreak}-streak` : ''}</div>
     </div>
   `).join('');
 }

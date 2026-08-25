@@ -28,12 +28,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ---------- Config: read by everyone, written by automation OR the admin (for table lock/unlock) ----------
+    // ---------- Config: read by everyone, written by automation OR the admin (for table/awards lock/unlock) ----------
     match /config/{doc} {
       allow read: if true;
       allow write: if request.auth != null
-        && request.auth.token.email == 'somnathpatracbsa@gmail.com' // ⚠️ replace with your exact Google account email
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tableLocked']);
+        && request.auth.token.email == 'somnathpatracbsa@gmail.com'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tableLocked', 'awardsLocked']);
     }
 
     // ---------- Users ----------
@@ -76,10 +76,14 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // ---------- Season award predictions (Golden Boot etc.) ----------
+    // ---------- Season award predictions (Golden Boot etc.): owner-only, blocked while admin has locked it ----------
     match /seasonPredictions/{uid} {
       allow read: if true;
-      allow create, update: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && (
+          get(/databases/$(database)/documents/config/current).data.awardsLocked != true
+          || request.auth.token.email == 'somnathpatracbsa@gmail.com'
+        );
       allow delete: if false;
     }
   }

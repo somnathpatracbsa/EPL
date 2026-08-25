@@ -36,7 +36,7 @@
     <button class="tab" data-tab="community">🗣️ Games</button>
     <button class="tab" data-tab="leaderboard">🏆 Leaderboard</button>
     <button class="tab" data-tab="awards">🎖️ Season Awards</button>
-    <button class="tab" data-tab="players">👕 Player Profiles</button>
+    <button class="tab" data-tab="players">👕 Warzone Players</button>
     <button class="tab" data-tab="highlights">🔥 Highlights</button>
     <button class="tab" data-tab="badges">🥇 Badges</button>
     <button class="tab" data-tab="profile">👤 My Profile</button>
@@ -156,6 +156,11 @@
         <h1>Season Awards Predictions</h1>
         <p class="sub">Bragging-rights category — free-text picks, judged manually at season end since red cards / detailed stats need a paid data feed.</p>
       </div>
+      <div id="awardsLockBanner" class="lock-banner" style="display:none;"></div>
+      <div id="awardsAdminLockControls" class="admin-controls" style="display:none;">
+        <button id="lockAwardsBtn" class="btn btn-secondary">🔒 Lock predictions for everyone</button>
+        <button id="unlockAwardsBtn" class="btn btn-secondary">🔓 Unlock predictions</button>
+      </div>
       <div class="extras-grid">
         <label>Golden Boot (top scorer)
           <input type="text" id="awardGoldenBoot" placeholder="Player name" />
@@ -182,10 +187,10 @@
 
     <section id="players" class="panel">
       <div class="panel-head">
-        <h1>Player Profiles</h1>
-        <p class="sub">This season's squads, synced weekly.</p>
+        <h1>Warzone Players</h1>
+        <p class="sub">Everyone competing in the league, with their stats at a glance.</p>
       </div>
-      <input type="text" id="playerSearch" class="player-search" placeholder="Search by name or team…" />
+      <input type="text" id="playerSearch" class="player-search" placeholder="Search by name…" />
       <div id="playersGrid" class="players-grid"></div>
     </section>
 
