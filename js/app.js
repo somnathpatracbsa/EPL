@@ -95,11 +95,11 @@ document.getElementById('tabs').addEventListener('click', (e) => {
 
   if (btn.dataset.tab === 'allTables') loadAllTables();
   if (btn.dataset.tab === 'community') loadCommunity();
-  if (btn.dataset.tab === 'players') loadPlayers();
   if (btn.dataset.tab === 'highlights') loadHighlights();
   if (btn.dataset.tab === 'awards') loadAwardsCommunity();
   if (btn.dataset.tab === 'profile') loadProfile();
   if (btn.dataset.tab === 'home') loadHome();
+  if (btn.dataset.tab === 'scorers') loadTopScorers();
 });
 
 async function loadHome() {
@@ -874,8 +874,10 @@ async function loadLeaderboard() {
   const snap = await getDocs(q);
   const body = document.getElementById('leaderboardBody');
   body.innerHTML = '';
+  const rows = [];
   snap.forEach(d => {
     const r = d.data();
+    rows.push({ uid: d.id, ...r });
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${r.rank}</td><td>${r.displayName || r.email || d.id}</td>
@@ -885,6 +887,65 @@ async function loadLeaderboard() {
     body.appendChild(tr);
   });
   if (!snap.size) body.innerHTML = `<tr><td colspan="7" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
+
+  await loadPlayers(rows); // same leaderboard data, no extra Firestore read for the player cards below
+}
+
+let warzonePlayersCache = null;
+async function loadPlayers(leaderboardRows) {
+  const grid = document.getElementById('playersGrid');
+  if (!grid) return;
+  grid.innerHTML = '<p class="empty-state">Loading…</p>';
+  try {
+    if (!warzonePlayersCache) {
+      const [users, badgesSnap] = await Promise.all([
+        getUsersMap(),
+        getDocs(collection(db, 'badges'))
+      ]);
+      const lbByUid = {};
+      leaderboardRows.forEach(r => { lbByUid[r.uid] = r; });
+      const badgeCountByUid = {};
+      badgesSnap.forEach(d => { badgeCountByUid[d.id] = (d.data().badges || []).length; });
+
+      warzonePlayersCache = Object.entries(users).map(([uid, u]) => {
+        const lb = lbByUid[uid] || {};
+        return {
+          uid,
+          name: u.displayName || 'Unknown player',
+          totalPoints: lb.totalPoints || 0,
+          rank: lb.rank || null,
+          currentStreak: lb.currentStreak || 0,
+          matchPoints: lb.matchPoints || 0,
+          tablePoints: lb.tablePoints || 0,
+          extraPoints: lb.extraPoints || 0,
+          badgeCount: badgeCountByUid[uid] || 0,
+          exactCount: lb.exactCount || 0,
+          accuracyPct: lb.accuracyPct || 0
+        };
+      }).sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
+    }
+    renderPlayers(warzonePlayersCache);
+    document.getElementById('playerSearch').oninput = (e) => {
+      const q = e.target.value.toLowerCase();
+      renderPlayers(warzonePlayersCache.filter(p => p.name.toLowerCase().includes(q)));
+    };
+  } catch (err) {
+    console.error('loadPlayers error:', err);
+    grid.innerHTML = `<p class="empty-state">⚠️ Couldn't load players right now. (Error: ${err.message || err.code || 'unknown'})</p>`;
+  }
+}
+
+function renderPlayers(list) {
+  const grid = document.getElementById('playersGrid');
+  if (!list.length) { grid.innerHTML = '<p class="empty-state">No one has signed in yet — be the first!</p>'; return; }
+  grid.innerHTML = list.map(p => `
+    <div class="player-card">
+      <div class="name">${p.name}${p.rank ? ` <span style="color:var(--amber); font-family:var(--font-mono); font-size:11px;">#${p.rank}</span>` : ''}</div>
+      <div class="meta">${p.totalPoints} pts total ${p.badgeCount ? `· 🥇 ${p.badgeCount}` : ''}</div>
+      <div class="meta">🎯 ${p.matchPoints} · 📋 ${p.tablePoints} · ⚡ ${p.extraPoints} ${p.currentStreak ? `· 🔥 ${p.currentStreak}-streak` : ''}</div>
+      <div class="meta">🎪 ${p.exactCount} perfect ${p.accuracyPct ? `· ✅ ${p.accuracyPct}% accuracy` : ''}</div>
+    </div>
+  `).join('');
 }
 
 // ---------- Season Awards tab ----------
@@ -989,59 +1050,39 @@ async function loadAwardsCommunity() {
   });
 }
 
-// ---------- Player Profiles tab ----------
-let warzonePlayersCache = null;
-async function loadPlayers() {
-  const grid = document.getElementById('playersGrid');
-  grid.innerHTML = '<p class="empty-state">Loading…</p>';
+// ---------- Top Scorers tab ----------
+async function loadTopScorers() {
+  const wrap = document.getElementById('scorersTableWrap');
+  wrap.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    if (!warzonePlayersCache) {
-      const [users, lbSnap, badgesSnap] = await Promise.all([
-        getUsersMap(),
-        getDocs(collection(db, 'leaderboard')),
-        getDocs(collection(db, 'badges'))
-      ]);
-      const lbByUid = {};
-      lbSnap.forEach(d => { lbByUid[d.id] = d.data(); });
-      const badgeCountByUid = {};
-      badgesSnap.forEach(d => { badgeCountByUid[d.id] = (d.data().badges || []).length; });
-
-      warzonePlayersCache = Object.entries(users).map(([uid, u]) => {
-        const lb = lbByUid[uid] || {};
-        return {
-          uid,
-          name: u.displayName || 'Unknown player',
-          totalPoints: lb.totalPoints || 0,
-          rank: lb.rank || null,
-          currentStreak: lb.currentStreak || 0,
-          matchPoints: lb.matchPoints || 0,
-          tablePoints: lb.tablePoints || 0,
-          extraPoints: lb.extraPoints || 0,
-          badgeCount: badgeCountByUid[uid] || 0
-        };
-      }).sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0));
+    const snap = await getDoc(doc(db, 'topScorers', 'current'));
+    if (!snap.exists() || !snap.data().items?.length) {
+      wrap.innerHTML = '<p class="empty-state">Top scorers haven\'t synced yet — this populates automatically from the next automation run.</p>';
+      return;
     }
-    renderPlayers(warzonePlayersCache);
-    document.getElementById('playerSearch').oninput = (e) => {
-      const q = e.target.value.toLowerCase();
-      renderPlayers(warzonePlayersCache.filter(p => p.name.toLowerCase().includes(q)));
-    };
+    const items = snap.data().items;
+    const rows = items.map((s, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${s.name}</td>
+        <td>${s.team}</td>
+        <td class="stat-goals">${s.goals}</td>
+        <td>${s.assists ?? '–'}</td>
+        <td>${s.playedMatches ?? '–'}</td>
+      </tr>
+    `).join('');
+    wrap.innerHTML = `
+      <div class="table-scroll">
+        <table class="matrix-table scorers-table">
+          <thead><tr><th>#</th><th>Player</th><th>Team</th><th>Goals</th><th>Assists</th><th>Played</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
   } catch (err) {
-    console.error('loadPlayers error:', err);
-    grid.innerHTML = `<p class="empty-state">⚠️ Couldn't load players right now. (Error: ${err.message || err.code || 'unknown'})</p>`;
+    console.error('loadTopScorers error:', err);
+    wrap.innerHTML = `<p class="empty-state">⚠️ Couldn't load top scorers right now. (Error: ${err.message || err.code || 'unknown'})</p>`;
   }
-}
-
-function renderPlayers(list) {
-  const grid = document.getElementById('playersGrid');
-  if (!list.length) { grid.innerHTML = '<p class="empty-state">No one has signed in yet — be the first!</p>'; return; }
-  grid.innerHTML = list.map(p => `
-    <div class="player-card">
-      <div class="name">${p.name}${p.rank ? ` <span style="color:var(--amber); font-family:var(--font-mono); font-size:11px;">#${p.rank}</span>` : ''}</div>
-      <div class="meta">${p.totalPoints} pts total ${p.badgeCount ? `· 🥇 ${p.badgeCount}` : ''}</div>
-      <div class="meta">🎯 ${p.matchPoints} · 📋 ${p.tablePoints} · ⚡ ${p.extraPoints} ${p.currentStreak ? `· 🔥 ${p.currentStreak}-streak` : ''}</div>
-    </div>
-  `).join('');
 }
 
 // ---------- Highlights tab ----------

@@ -18,6 +18,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /topScorers/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /leaderboard/{uid} {
       allow read: if true;
       allow write: if false;

@@ -140,12 +140,19 @@ async function updateLeaderboard(fixturesInMemory) {
   fixturesInMemory.forEach(f => { fixtureGW[f.id] = f.gameweek; });
 
   const userPoints = {}, userGWHit = {}, userExtraPoints = {};
+  const userExactCount = {}, userScoredCount = {}, userOutcomeCount = {};
   predsSnap.forEach(d => {
     const p = d.data();
     userPoints[p.uid] = (userPoints[p.uid] || 0) + (p.points || 0);
     const gw = fixtureGW[p.fixtureId];
     if (!userGWHit[p.uid]) userGWHit[p.uid] = {};
     if ((p.points || 0) > 0) userGWHit[p.uid][gw] = true;
+
+    if (p.scored) {
+      userScoredCount[p.uid] = (userScoredCount[p.uid] || 0) + 1;
+      if (p.points === SCORING.EXACT_SCORE_POINTS) userExactCount[p.uid] = (userExactCount[p.uid] || 0) + 1;
+      if (p.points === SCORING.CORRECT_OUTCOME_POINTS) userOutcomeCount[p.uid] = (userOutcomeCount[p.uid] || 0) + 1;
+    }
   });
   extrasSnap.forEach(d => {
     const e = d.data();
@@ -177,10 +184,15 @@ async function updateLeaderboard(fixturesInMemory) {
     const currentStreak = userStreaks[d.id] || 0;
     const tier = SCORING.STREAK_TIERS.find(t => currentStreak >= t.min); // tiers are ordered highest-first, so first match wins
     if (tier) streakBonus = tier.bonus;
+    const scoredCount = userScoredCount[d.id] || 0;
+    const exactCount = userExactCount[d.id] || 0;
+    const outcomeCount = userOutcomeCount[d.id] || 0;
+    const accuracyPct = scoredCount ? Math.round(((exactCount + outcomeCount) / scoredCount) * 100) : 0;
     rows.push({
       uid: d.id, displayName: u.displayName, email: u.email,
       matchPoints: matchPts, tablePoints: tablePts, extraPoints: extraPts,
       currentStreak: userStreaks[d.id] || 0,
+      exactCount, accuracyPct,
       totalPoints: matchPts + tablePts + extraPts + streakBonus
     });
   });
@@ -222,6 +234,24 @@ async function scoreTablePredictions(weight) {
 }
 
 // ---------- 5b. Live standings order (every run — powers row sorting on the site, not scoring) ----------
+// ---------- 5c. Top scorers (every run — real per-player data from the free /scorers endpoint) ----------
+async function syncTopScorers() {
+  const data = await apiFetch(`/competitions/${COMPETITION}/scorers?limit=20`);
+  if (!data || !data.scorers) return;
+  const items = data.scorers.map(s => ({
+    name: s.player?.name || 'Unknown',
+    team: s.team?.name || '',
+    goals: s.goals ?? 0,
+    assists: s.assists ?? null, // not always populated by the API even on this endpoint
+    penalties: s.penalties ?? null,
+    playedMatches: s.playedMatches ?? null
+  }));
+  await db.collection('topScorers').doc('current').set({
+    items, updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  console.log(`Top scorers synced (${items.length} players).`);
+}
+
 async function syncStandingsOrder() {
   const data = await apiFetch(`/competitions/${COMPETITION}/standings`);
   if (!data || !data.standings) return null;
@@ -357,6 +387,7 @@ async function main() {
   const matchesScored = await scoreFinishedMatches(fixturesInMemory);
   const extrasScored = await scoreGwExtras(fixturesInMemory);
   const standingsTableLive = await syncStandingsOrder();
+  await syncTopScorers();
 
   // config/current read once, used both for the midseason-checkpoint check and to decide
   // whether the expensive full-collection leaderboard rebuild is actually necessary this run.

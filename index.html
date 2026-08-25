@@ -36,7 +36,7 @@
     <button class="tab" data-tab="community">🗣️ Games</button>
     <button class="tab" data-tab="leaderboard">🏆 Leaderboard</button>
     <button class="tab" data-tab="awards">🎖️ Season Awards</button>
-    <button class="tab" data-tab="players">👕 Warzone Players</button>
+    <button class="tab" data-tab="scorers">🥅 Top Scorers</button>
     <button class="tab" data-tab="highlights">🔥 Highlights</button>
     <button class="tab" data-tab="badges">🥇 Badges</button>
     <button class="tab" data-tab="profile">👤 My Profile</button>
@@ -149,6 +149,20 @@
         </thead>
         <tbody id="leaderboardBody"></tbody>
       </table>
+
+      <h2 class="section-title">Warzone Players</h2>
+      <p class="sub">Everyone competing, with their stats at a glance.</p>
+      <div class="icon-legend">
+        <span>🎯 Match points</span>
+        <span>📋 Table points</span>
+        <span>⚡ Extras points</span>
+        <span>🔥 Current streak</span>
+        <span>🥇 Badges earned</span>
+        <span>🎪 Perfect predictions (exact score)</span>
+        <span>✅ Prediction accuracy</span>
+      </div>
+      <input type="text" id="playerSearch" class="player-search" placeholder="Search by name…" />
+      <div id="playersGrid" class="players-grid"></div>
     </section>
 
     <section id="awards" class="panel">
@@ -185,13 +199,12 @@
       <div id="awardsCommunity" class="awards-community"></div>
     </section>
 
-    <section id="players" class="panel">
+    <section id="scorers" class="panel">
       <div class="panel-head">
-        <h1>Warzone Players</h1>
-        <p class="sub">Everyone competing in the league, with their stats at a glance.</p>
+        <h1>Top Scorers</h1>
+        <p class="sub">Real Premier League player data — synced hourly from the free tier's scorers list.</p>
       </div>
-      <input type="text" id="playerSearch" class="player-search" placeholder="Search by name…" />
-      <div id="playersGrid" class="players-grid"></div>
+      <div id="scorersTableWrap"><p class="empty-state">Loading…</p></div>
     </section>
 
     <section id="highlights" class="panel">
