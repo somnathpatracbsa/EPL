@@ -375,25 +375,46 @@ async function main() {
   const matches = await syncFixtures();
   if (!matches) { console.log('No match data returned — aborting run.'); return; }
 
-  // Built once, directly from the API response we already have in memory — this replaces
-  // 4 separate full-collection Firestore reads of `fixtures` that used to happen on every
-  // run (the actual cause of the daily quota getting blown through on a 10-min schedule).
   const fixturesInMemory = matches.map(m => ({
     id: String(m.id), gameweek: m.matchday, homeTeam: m.homeTeam.name, awayTeam: m.awayTeam.name,
     kickoffUTC: m.utcDate, status: m.status,
     homeScore: m.score.fullTime.home, awayScore: m.score.fullTime.away
   }));
 
-  const matchesScored = await scoreFinishedMatches(fixturesInMemory);
-  const extrasScored = await scoreGwExtras(fixturesInMemory);
-  const standingsTableLive = await syncStandingsOrder();
-  await syncTopScorers();
+  // RELIABILITY FIX: these used to run as one unguarded sequence — if an earlier step threw
+  // (e.g. a transient Firestore read failure), everything after it silently never ran, including
+  // the standings/scorers sync. That was very likely why the Table tab's standings order could
+  // go stale for extended periods without any visible error. Two changes: (1) standings/scorers
+  // sync now runs FIRST, right after the fixtures sync — it's cheap (no Firestore reads at all,
+  // just an API call + one tiny doc write) and independent of match scoring, so there's no good
+  // reason for it to be blocked by anything else. (2) every step is now wrapped so a failure in
+  // one is logged and isolated instead of silently cancelling the rest of the run.
+  let standingsTableLive = null;
+  try {
+    standingsTableLive = await syncStandingsOrder();
+    if (standingsTableLive) {
+      console.log(`Standings check: top 3 = ${standingsTableLive.slice(0, 3).map(t => t.team.name).join(', ')}`);
+    }
+  } catch (err) { console.error('syncStandingsOrder failed:', err.message); }
+
+  try { await syncTopScorers(); }
+  catch (err) { console.error('syncTopScorers failed:', err.message); }
+
+  let matchesScored = 0, extrasScored = 0;
+  try { matchesScored = await scoreFinishedMatches(fixturesInMemory); }
+  catch (err) { console.error('scoreFinishedMatches failed:', err.message); }
+
+  try { extrasScored = await scoreGwExtras(fixturesInMemory); }
+  catch (err) { console.error('scoreGwExtras failed:', err.message); }
 
   // config/current read once, used both for the midseason-checkpoint check and to decide
   // whether the expensive full-collection leaderboard rebuild is actually necessary this run.
   const configRef = db.collection('config').doc('current');
-  const configSnap = await configRef.get();
-  const configData = configSnap.exists ? configSnap.data() : {};
+  let configData = {};
+  try {
+    const configSnap = await configRef.get();
+    configData = configSnap.exists ? configSnap.data() : {};
+  } catch (err) { console.error('config read failed:', err.message); }
   const currentGW = configData.currentGameweek ?? null;
   const todayStr = new Date().toISOString().slice(0, 10);
   const alreadyRebuiltToday = configData.lastLeaderboardRebuildDate === todayStr;
@@ -410,15 +431,18 @@ async function main() {
 
   let standingsTable = standingsTableLive;
   if (currentGW === SCORING.MIDSEASON_GAMEWEEK) {
-    standingsTable = await scoreTablePredictions(SCORING.MIDSEASON_WEIGHT);
+    try { standingsTable = await scoreTablePredictions(SCORING.MIDSEASON_WEIGHT); }
+    catch (err) { console.error('scoreTablePredictions failed:', err.message); }
   }
 
   if (shouldRebuild) {
-    const rows = await updateLeaderboard(fixturesInMemory);
-    await checkBadges(rows, fixturesInMemory);
-    await generateHighlights(rows, matches, standingsTable);
-    await configRef.set({ lastLeaderboardRebuildDate: todayStr }, { merge: true });
-    console.log(`Leaderboard rebuilt (reason: ${somethingChanged ? `${matchesScored} match(es) + ${extrasScored} extra(s) scored` : 'daily safety-net refresh'}).`);
+    try {
+      const rows = await updateLeaderboard(fixturesInMemory);
+      await checkBadges(rows, fixturesInMemory);
+      await generateHighlights(rows, matches, standingsTable);
+      await configRef.set({ lastLeaderboardRebuildDate: todayStr }, { merge: true });
+      console.log(`Leaderboard rebuilt (reason: ${somethingChanged ? `${matchesScored} match(es) + ${extrasScored} extra(s) scored` : 'daily safety-net refresh'}).`);
+    } catch (err) { console.error('Leaderboard/badges/highlights rebuild failed:', err.message); }
   } else {
     console.log('Nothing scored this run and already rebuilt today — skipping the expensive leaderboard/badges/highlights rebuild to save Firestore reads.');
   }

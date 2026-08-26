@@ -247,6 +247,21 @@ async function loadConfig() {
 }
 
 // ---------- Predict Gameweek tab ----------
+let currentGwFixtureCards = []; // populated by loadFixtures — {card, fx, predRef} for each unlocked fixture, used by Save All
+
+async function savePredictionForCard(card, fx, predRef) {
+  const h = card.querySelector('.home-score').value;
+  const a = card.querySelector('.away-score').value;
+  if (h === '' || a === '') return false;
+  await setDoc(predRef, {
+    uid: currentUser.uid, fixtureId: fx.id, predHome: Number(h), predAway: Number(a),
+    scored: false, points: 0, submittedAt: serverTimestamp()
+  });
+  card.querySelector('.pred-status').textContent = 'Saved ✓';
+  renderCrowdPulse(card.querySelector('.crowd-pulse'), fx, true);
+  return true;
+}
+
 async function loadFixtures() {
  try {
   const cfg = await loadConfig();
@@ -269,9 +284,12 @@ async function loadFixtures() {
   document.getElementById('tickerTrack').textContent = tickerText + '     ' + tickerText;
 
   const list = document.getElementById('fixtureList');
+  currentGwFixtureCards = [];
   if (!fixtures.length) {
     list.innerHTML = `<p class="empty-state">No fixtures for this gameweek yet. The sync job will populate them automatically.</p>`;
     document.getElementById('gwExtras').style.display = 'none';
+    document.getElementById('saveAllBtn').style.display = 'none';
+    document.getElementById('saveAllWithExtrasBtn').style.display = 'none';
     return;
   }
 
@@ -290,6 +308,7 @@ async function loadFixtures() {
   allPredsForGW.forEach(p => { (predsByFixture[p.fixtureId] = predsByFixture[p.fixtureId] || []).push(p); });
 
   list.innerHTML = '';
+  let anyUnlocked = false;
   for (const fx of fixtures) {
     const locked = new Date(fx.kickoffUTC) <= new Date() || (fx.status !== 'SCHEDULED' && fx.status !== 'TIMED');
     const fixturePreds = predsByFixture[fx.id] || [];
@@ -315,22 +334,19 @@ async function loadFixtures() {
       <div class="crowd-pulse" data-fixture="${fx.id}">${existing ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">🔒 Save your own prediction to see what everyone else thinks.</div>'}</div>
     `;
     if (!locked) {
+      anyUnlocked = true;
       const saveBtn = card.querySelector('.save-pred-btn');
       saveBtn.addEventListener('click', async () => {
-        const h = card.querySelector('.home-score').value;
-        const a = card.querySelector('.away-score').value;
-        if (h === '' || a === '') return;
-        await setDoc(predRef, {
-          uid: currentUser.uid, fixtureId: fx.id, predHome: Number(h), predAway: Number(a),
-          scored: false, points: 0, submittedAt: serverTimestamp()
-        });
-        card.querySelector('.pred-status').textContent = 'Saved ✓';
-        celebrate('Prediction locked in! ⚽');
-        renderCrowdPulse(card.querySelector('.crowd-pulse'), fx, true);
+        const ok = await savePredictionForCard(card, fx, predRef);
+        if (ok) celebrate('Prediction locked in! ⚽');
       });
+      currentGwFixtureCards.push({ card, fx, predRef });
     }
     list.appendChild(card);
   }
+
+  document.getElementById('saveAllBtn').style.display = anyUnlocked ? 'inline-block' : 'none';
+  document.getElementById('saveAllWithExtrasBtn').style.display = anyUnlocked ? 'inline-block' : 'none';
 
   await setupGwExtras(fixtures);
  } catch (err) {
@@ -338,6 +354,25 @@ async function loadFixtures() {
   document.getElementById('fixtureList').innerHTML = `<p class="empty-state">⚠️ Couldn't load this gameweek's fixtures. Try refreshing the page. (Error: ${err.message || err.code || 'unknown'})</p>`;
  }
 }
+
+document.getElementById('saveAllBtn').addEventListener('click', async () => {
+  let count = 0;
+  for (const { card, fx, predRef } of currentGwFixtureCards) {
+    const ok = await savePredictionForCard(card, fx, predRef);
+    if (ok) count++;
+  }
+  celebrate(count ? `${count} prediction${count === 1 ? '' : 's'} saved! ⚽` : 'Fill in at least one score first');
+});
+
+document.getElementById('saveAllWithExtrasBtn').addEventListener('click', async () => {
+  let count = 0;
+  for (const { card, fx, predRef } of currentGwFixtureCards) {
+    const ok = await savePredictionForCard(card, fx, predRef);
+    if (ok) count++;
+  }
+  const extrasSaved = await saveGwExtras();
+  celebrate(`${count} prediction${count === 1 ? '' : 's'}${extrasSaved ? ' + extras' : ''} saved! 🎯`);
+});
 
 function computeCrowdStats(predictionDocs, fixture) {
   let home = 0, draw = 0, away = 0, sumHome = 0, sumAway = 0;
@@ -468,16 +503,25 @@ async function setupGwExtras(fixtures) {
   document.getElementById('gwExtras').style.display = 'block';
 
   document.getElementById('saveExtrasBtn').onclick = async () => {
-    await setDoc(ref, {
-      uid: currentUser.uid, gameweek: currentGW,
-      topScoringTeam: topSel.value, cleanSheetTeam: csSel.value,
-      topScoringPlayerGuess: document.getElementById('topScoringPlayer').value.trim(),
-      cleanSheetPlayerGuess: document.getElementById('cleanSheetPlayer').value.trim(),
-      scored: false, points: 0, submittedAt: serverTimestamp()
-    });
-    document.getElementById('extrasStatus').textContent = 'Saved ✓';
+    await saveGwExtras();
     celebrate('Extras locked in! 🎯');
   };
+}
+
+async function saveGwExtras() {
+  const topSel = document.getElementById('topScoringTeam');
+  const csSel = document.getElementById('cleanSheetTeam');
+  if (!topSel.value || !csSel.value) return false;
+  const ref = doc(db, 'gwExtraPredictions', `${currentUser.uid}_${currentGW}`);
+  await setDoc(ref, {
+    uid: currentUser.uid, gameweek: currentGW,
+    topScoringTeam: topSel.value, cleanSheetTeam: csSel.value,
+    topScoringPlayerGuess: document.getElementById('topScoringPlayer').value.trim(),
+    cleanSheetPlayerGuess: document.getElementById('cleanSheetPlayer').value.trim(),
+    scored: false, points: 0, submittedAt: serverTimestamp()
+  });
+  document.getElementById('extrasStatus').textContent = 'Saved ✓';
+  return true;
 }
 
 // ---------- Predict League Table tab ----------

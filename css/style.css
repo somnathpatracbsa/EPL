@@ -173,6 +173,7 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 }
 
 /* ---------- Fixture / prediction cards ---------- */
+.save-all-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .fixture-list { display: flex; flex-direction: column; gap: 12px; }
 .fixture-card {
   background: rgba(255,255,255,0.03);
