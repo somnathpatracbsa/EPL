@@ -533,7 +533,11 @@ async function loadTablePredictor() {
 
   const ref = doc(db, 'tablePredictions', currentUser.uid);
   const snap = await getDoc(ref);
-  const teams = snap.exists() && snap.data().teams
+  // BUG FIX: an empty array ([]) is truthy in JS, so a corrupted doc with teams: [] (from an
+  // old save-bug) was passing this check and rendering zero rows — a permanently blank table
+  // for that specific account, on every device, since it's a data issue not a client-side one.
+  const hasValidTeams = snap.exists() && Array.isArray(snap.data().teams) && snap.data().teams.length > 0;
+  const teams = hasValidTeams
     ? snap.data().teams.sort((a, b) => a.predictedPosition - b.predictedPosition).map(t => t.team)
     : orderTeams(PL_TEAMS_DEFAULT);
 
