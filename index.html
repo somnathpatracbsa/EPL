@@ -38,7 +38,6 @@
     <button class="tab" data-tab="awards">🎖️ Season Awards</button>
     <button class="tab" data-tab="scorers">🥅 Top Scorers</button>
     <button class="tab" data-tab="highlights">🔥 Highlights</button>
-    <button class="tab" data-tab="badges">🥇 Badges</button>
     <button class="tab" data-tab="profile">👤 My Profile</button>
   </nav>
 
@@ -148,12 +147,14 @@
         <h1>Leaderboard</h1>
         <p class="sub">Updated automatically after every gameweek.</p>
       </div>
-      <table class="leaderboard-table">
-        <thead>
-          <tr><th>Rank</th><th>Player</th><th>Match Pts</th><th>Table Pts</th><th>Extras Pts</th><th>Streak</th><th>Total</th></tr>
-        </thead>
-        <tbody id="leaderboardBody"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="leaderboard-table">
+          <thead>
+            <tr><th>Rank</th><th>Player</th><th>Match Pts</th><th>Table Pts</th><th>Extras Pts</th><th>Streak</th><th>Predicted</th><th>Correct</th><th>Perfect</th><th>Total</th></tr>
+          </thead>
+          <tbody id="leaderboardBody"></tbody>
+        </table>
+      </div>
 
       <h2 class="section-title">Warzone Players</h2>
       <p class="sub">Everyone competing, with their stats at a glance.</p>
@@ -202,6 +203,10 @@
 
       <h2 class="section-title" style="margin-top:32px;">What everyone else picked</h2>
       <div id="awardsCommunity" class="awards-community"></div>
+
+      <h2 class="section-title" style="margin-top:32px;">📊 Current Top Scorers (for reference)</h2>
+      <p class="sub">Real Premier League stats — handy to check before picking your Golden Boot guess.</p>
+      <div id="awardsScorersRef"><p class="empty-state">Loading…</p></div>
     </section>
 
     <section id="scorers" class="panel">
@@ -220,21 +225,20 @@
       <div id="highlightsList" class="highlights-list"></div>
     </section>
 
-    <section id="badges" class="panel">
-      <div class="panel-head">
-        <h1>Badge Cabinet</h1>
-        <p class="sub">Earned automatically. No favours.</p>
-      </div>
-      <div id="badgeGrid" class="badge-grid"></div>
-    </section>
-
     <section id="profile" class="panel">
-      <div class="panel-head">
-        <h1 id="profileName">My Profile</h1>
-        <p class="sub">Your full prediction and result history, all in one place.</p>
+      <div class="panel-head profile-head">
+        <img id="profileAvatar" class="profile-avatar" alt="" style="display:none;" referrerpolicy="no-referrer">
+        <div>
+          <h1 id="profileName">My Profile</h1>
+          <p class="sub">Your full prediction and result history, all in one place.</p>
+        </div>
       </div>
       <div id="profileStats" class="profile-stats"></div>
-      <h2 class="section-title">Match-by-match history</h2>
+
+      <h2 class="section-title">🥇 Badge Cabinet</h2>
+      <div id="badgeGrid" class="badge-grid"></div>
+
+      <h2 class="section-title">Prediction history, by gameweek</h2>
       <div id="profileHistory" class="profile-history">
         <p class="empty-state">Sign in to see your history.</p>
       </div>

@@ -140,10 +140,11 @@ async function updateLeaderboard(fixturesInMemory) {
   fixturesInMemory.forEach(f => { fixtureGW[f.id] = f.gameweek; });
 
   const userPoints = {}, userGWHit = {}, userExtraPoints = {};
-  const userExactCount = {}, userScoredCount = {}, userOutcomeCount = {};
+  const userExactCount = {}, userScoredCount = {}, userOutcomeCount = {}, userTotalCount = {};
   predsSnap.forEach(d => {
     const p = d.data();
     userPoints[p.uid] = (userPoints[p.uid] || 0) + (p.points || 0);
+    userTotalCount[p.uid] = (userTotalCount[p.uid] || 0) + 1;
     const gw = fixtureGW[p.fixtureId];
     if (!userGWHit[p.uid]) userGWHit[p.uid] = {};
     if ((p.points || 0) > 0) userGWHit[p.uid][gw] = true;
@@ -193,6 +194,9 @@ async function updateLeaderboard(fixturesInMemory) {
       matchPoints: matchPts, tablePoints: tablePts, extraPoints: extraPts,
       currentStreak: userStreaks[d.id] || 0,
       exactCount, accuracyPct,
+      matchesPredicted: userTotalCount[d.id] || 0,
+      correctPredictions: exactCount + outcomeCount,
+      perfectPredictions: exactCount,
       totalPoints: matchPts + tablePts + extraPts + streakBonus
     });
   });
@@ -256,9 +260,30 @@ async function syncStandingsOrder() {
   const data = await apiFetch(`/competitions/${COMPETITION}/standings`);
   if (!data || !data.standings) return null;
   const table = data.standings.find(s => s.type === 'TOTAL').table;
-  const standingsOrder = table.sort((a, b) => a.position - b.position).map(t => t.team.name);
-  await db.collection('config').doc('current').set({ standingsOrder }, { merge: true });
-  console.log(`Standings order synced (${standingsOrder.length} teams).`);
+  const sorted = table.sort((a, b) => a.position - b.position);
+  const standingsOrder = sorted.map(t => t.team.name);
+
+  // Re-added after the earlier removal — that removal was a workaround for data not
+  // populating, but the real cause turned out to be the execution-order bug fixed above
+  // (this function could silently never run some hours). Only fields the free tier actually
+  // provides — no paid-tier-only data.
+  const standingsStats = {};
+  sorted.forEach(t => {
+    standingsStats[t.team.name] = {
+      played: t.playedGames ?? null,
+      won: t.won ?? null,
+      draw: t.draw ?? null,
+      lost: t.lost ?? null,
+      goalsFor: t.goalsFor ?? null,
+      goalsAgainst: t.goalsAgainst ?? null,
+      goalDifference: t.goalDifference ?? null,
+      points: t.points ?? null,
+      form: t.form ?? null // comma-separated e.g. "W,D,L,W,W" — not always populated by the API even here
+    };
+  });
+
+  await db.collection('config').doc('current').set({ standingsOrder, standingsStats }, { merge: true });
+  console.log(`Standings order + stats synced (${standingsOrder.length} teams).`);
   return table;
 }
 

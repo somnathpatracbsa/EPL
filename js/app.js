@@ -96,7 +96,7 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   if (btn.dataset.tab === 'allTables') loadAllTables();
   if (btn.dataset.tab === 'community') loadCommunity();
   if (btn.dataset.tab === 'highlights') loadHighlights();
-  if (btn.dataset.tab === 'awards') loadAwardsCommunity();
+  if (btn.dataset.tab === 'awards') { loadAwardsCommunity(); loadAwardsScorersRef(); }
   if (btn.dataset.tab === 'profile') loadProfile();
   if (btn.dataset.tab === 'home') loadHome();
   if (btn.dataset.tab === 'scorers') loadTopScorers();
@@ -124,6 +124,16 @@ function celebrate(message) {
   setTimeout(() => el.classList.remove('show'), 1800);
 }
 
+function avatarHTML(uid, users, size) {
+  size = size || '24px';
+  const u = (users && users[uid]) || {};
+  if (u.photoURL) {
+    return `<img src="${u.photoURL}" class="avatar-img" style="width:${size};height:${size};" alt="" referrerpolicy="no-referrer" onerror="this.style.display='none'">`;
+  }
+  const initial = (u.displayName || '?').trim().charAt(0).toUpperCase() || '?';
+  return `<span class="avatar-fallback" style="width:${size};height:${size};">${initial}</span>`;
+}
+
 function kitColor(teamName) {
   const colors = ['#e64545', '#8b5cf6', '#4cbf7a', '#ffb627', '#3b82f6', '#ec4899', '#14b8a6'];
   let hash = 0;
@@ -149,6 +159,13 @@ const NAME_ALIASES = { 'brighton': 'brightonhovealbion' };
 function normalizeTeamName(name) {
   let n = String(name || '').toLowerCase().replace(/fc|afc|&/g, '').replace(/[^a-z0-9]/g, '').trim();
   return NAME_ALIASES[n] || n;
+}
+
+function getActualRank(teamName) {
+  if (!standingsOrder || !standingsOrder.length) return null;
+  const norm = normalizeTeamName(teamName);
+  const idx = standingsOrder.findIndex(s => normalizeTeamName(s) === norm);
+  return idx === -1 ? null : idx + 1;
 }
 
 function orderTeams(teams) {
@@ -206,7 +223,6 @@ onAuthStateChanged(auth, async (user) => {
     document.getElementById('adminLockControls').style.display = 'none';
   }
   loadLeaderboard();
-  loadBadges();
   loadHome();
 });
 
@@ -214,7 +230,9 @@ async function ensureUserDoc(user) {
   const ref = doc(db, 'users', user.uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    await setDoc(ref, { email: user.email, displayName: user.displayName, joinedAt: serverTimestamp() });
+    await setDoc(ref, { email: user.email, displayName: user.displayName, photoURL: user.photoURL || null, joinedAt: serverTimestamp() });
+  } else if (snap.data().photoURL !== user.photoURL) {
+    await setDoc(ref, { photoURL: user.photoURL || null }, { merge: true });
   }
 }
 
@@ -274,7 +292,7 @@ async function savePredictionForCard(card, fx, predRef) {
     scored: false, points: 0, submittedAt: serverTimestamp()
   });
   card.querySelector('.pred-status').textContent = 'Saved ✓';
-  renderCrowdPulse(card.querySelector('.crowd-pulse'), fx, true);
+  renderCrowdPulse(card.querySelector('.crowd-pulse'), fx);
   return true;
 }
 
@@ -336,7 +354,7 @@ async function loadFixtures() {
     card.innerHTML = `
       <div class="fixture-main">
         <div>
-          <div class="fixture-teams"><span class="kit-dot" style="background:${kitColor(fx.homeTeam)}"></span>${fx.homeTeam} <span style="color:var(--chalk-dim); font-weight:400;">vs</span> ${fx.awayTeam} <span class="kit-dot" style="background:${kitColor(fx.awayTeam)}"></span></div>
+          <div class="fixture-teams"><span class="kit-dot" style="background:${kitColor(fx.homeTeam)}"></span>${fx.homeTeam} <span class="home-away-tag">(Home)</span> <span style="color:var(--chalk-dim); font-weight:400;">vs</span> ${fx.awayTeam} <span class="home-away-tag">(Away)</span> <span class="kit-dot" style="background:${kitColor(fx.awayTeam)}"></span></div>
           <div class="fixture-kickoff">${matchStatusLine(fx, locked)}</div>
         </div>
         <div class="score-input-group">
@@ -347,7 +365,7 @@ async function loadFixtures() {
           <span class="pred-status"></span>
         </div>
       </div>
-      <div class="crowd-pulse" data-fixture="${fx.id}">${existing ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">🔒 Save your own prediction to see what everyone else thinks.</div>'}</div>
+      <div class="crowd-pulse" data-fixture="${fx.id}">${fixturePreds.length ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">No predictions yet — be the first!</div>'}</div>
     `;
     if (!locked) {
       anyUnlocked = true;
@@ -485,15 +503,11 @@ function crowdPulseHTML(stats, fixture) {
   `;
 }
 
-async function renderCrowdPulse(container, fixture, unlocked) {
-  if (!unlocked) {
-    container.innerHTML = `<div class="crowd-locked-note">🔒 Save your own prediction to see what everyone else thinks.</div>`;
-    return;
-  }
+async function renderCrowdPulse(container, fixture) {
   const q = query(collection(db, 'predictions'), where('fixtureId', '==', fixture.id));
   const snap = await getDocs(q);
   if (snap.empty) {
-    container.innerHTML = `<div class="crowd-locked-note">No other predictions yet — be the first!</div>`;
+    container.innerHTML = `<div class="crowd-locked-note">No predictions yet — be the first!</div>`;
     return;
   }
   const stats = computeCrowdStats(snap.docs.map(d => d.data()), fixture);
@@ -591,10 +605,13 @@ function renderTableList(teams, locked) {
     const li = document.createElement('li');
     li.draggable = !locked;
     li.dataset.team = team;
+    const actualRank = getActualRank(team);
+    const actualZone = actualRank ? positionZoneClass(actualRank, teams.length) : '';
     li.innerHTML = `
       <span class="pos"></span>
       <span class="kit-dot" style="background:${kitColor(team)}"></span>
       <span style="flex:1;">${team}</span>
+      ${actualRank ? `<span class="actual-standing ${actualZone}" title="Current real standing">#${actualRank}</span>` : ''}
       ${locked ? '' : `
       <div class="reorder-controls" style="display: flex; align-items: center; gap: 6px;">
         <input type="number" class="rank-input" min="1" max="${teams.length}" aria-label="Set rank for ${team}" style="width: 45px; text-align: center;">
@@ -800,17 +817,35 @@ async function loadAllTables() {
       ? `<p class="empty-state" style="margin-bottom:8px;">↔️ ${playerEntries.length} players — scroll sideways to compare everyone. Your column is highlighted in amber, and the header row/team column stay pinned as you scroll.</p>`
       : '';
 
-    const header = `<tr><th>Team</th>${playerEntries.map(p => `<th class="${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}">${p.name}</th>`).join('')}</tr>`;
+    const header = `<tr><th>Team</th><th>GD</th><th>W</th><th>D</th><th>L</th><th>Form</th>${playerEntries.map(p => `<th class="${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}">${avatarHTML(p.uid, users, '20px')} ${p.name}</th>`).join('')}</tr>`;
+
+    // Stats keyed by the API's exact team name — build a normalized lookup so it matches
+    // regardless of small spelling differences against our own team-name strings (same
+    // normalizeTeamName approach used for standings order, for the same reason).
+    const rawStats = cfg.standingsStats || {};
+    const normalizedStats = {};
+    Object.entries(rawStats).forEach(([k, v]) => { normalizedStats[normalizeTeamName(k)] = v; });
+    const getStatsFor = (teamName) => normalizedStats[normalizeTeamName(teamName)] || null;
+    const formChips = formStr => {
+      if (!formStr) return '–';
+      return `<span class="form-chips">${formStr.split(',').map(r => `<span class="form-chip ${r.trim()}">${r.trim()}</span>`).join('')}</span>`;
+    };
 
     const rows = teamRows.map((teamName, idx) => {
       const actualPos = idx + 1;
       const actualZone = positionZoneClass(actualPos, totalTeams);
+      const s = getStatsFor(teamName);
       return `
       <tr>
         <td>
           <span class="kit-dot" style="background:${typeof kitColor === 'function' ? kitColor(teamName) : '#ccc'}; margin-right:6px;"></span>${teamName}
           <span class="actual-standing ${actualZone}">#${actualPos}</span>
         </td>
+        <td class="stat-col">${s && s.goalDifference != null ? (s.goalDifference > 0 ? '+' : '') + s.goalDifference : '–'}</td>
+        <td class="stat-col">${s?.won ?? '–'}</td>
+        <td class="stat-col">${s?.draw ?? '–'}</td>
+        <td class="stat-col">${s?.lost ?? '–'}</td>
+        <td class="stat-col">${s ? formChips(s.form) : '–'}</td>
         ${playerEntries.map(p => {
           const predPos = p.positions[teamName];
           const zone = positionZoneClass(predPos, totalTeams);
@@ -887,11 +922,15 @@ async function loadCommunity(showAll = false) {
     grid.appendChild(loadMoreBtn);
   }
 
-  gwNumbers.forEach(gw => {
-    const sectionHeader = document.createElement('div');
-    sectionHeader.className = 'gw-section-header';
-    sectionHeader.textContent = `Gameweek ${gw}`;
-    grid.appendChild(sectionHeader);
+  gwNumbers.forEach((gw, i) => {
+    const details = document.createElement('details');
+    details.className = 'gw-collapsible';
+    details.open = i === 0; // most recent gameweek starts expanded, older ones collapsed
+
+    const summary = document.createElement('summary');
+    summary.className = 'gw-section-header';
+    summary.textContent = `Gameweek ${gw}`;
+    details.appendChild(summary);
 
     const gwFixtures = byGW[gw].sort((a, b) => new Date(a.kickoffUTC) - new Date(b.kickoffUTC));
     gwFixtures.forEach(fx => {
@@ -907,8 +946,9 @@ async function loadCommunity(showAll = false) {
             ? '<span class="result-tick" title="Outcome correct">✅</span>'
             : '<span class="result-cross" title="Outcome incorrect">❌</span>';
         }
-        return `<tr>
-          <td class="player-name ${info.cls}">${users[p.uid]?.displayName || 'Unknown'}</td>
+        const isMine = currentUser && p.uid === currentUser.uid;
+        return `<tr class="${isMine ? 'my-prediction-row' : ''}">
+          <td class="player-name ${info.cls}">${isMine ? '👤 ' : ''}${users[p.uid]?.displayName || 'Unknown'}${isMine ? ' (You)' : ''}</td>
           <td class="score-cell ${info.cls}">${p.predHome}–${p.predAway}</td>
           <td class="outcome-cell ${info.cls}">${info.text}</td>
           <td class="result-icon">${resultIcon}</td>
@@ -922,8 +962,10 @@ async function loadCommunity(showAll = false) {
         <div class="crowd-pulse">${fixturePreds.length ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">No predictions yet</div>'}</div>
         <table>${rows || '<tr><td colspan="4" class="empty-state">No predictions</td></tr>'}</table>
       `;
-      grid.appendChild(card);
+      details.appendChild(card);
     });
+
+    grid.appendChild(details);
   });
 }
 
@@ -935,18 +977,23 @@ async function loadLeaderboard() {
   const body = document.getElementById('leaderboardBody');
   body.innerHTML = '';
   const rows = [];
-  snap.forEach(d => {
-    const r = d.data();
-    rows.push({ uid: d.id, ...r });
+  snap.forEach(d => rows.push({ uid: d.id, ...d.data() }));
+  const totalPlayers = rows.length;
+
+  rows.forEach(r => {
     const tr = document.createElement('tr');
+    const zone = positionZoneClass(r.rank, totalPlayers);
+    if (zone) tr.classList.add(zone);
     tr.innerHTML = `
-      <td>${r.rank}</td><td>${r.displayName || r.email || d.id}</td>
+      <td>${r.rank}</td><td>${r.displayName || r.email || r.uid}</td>
       <td>${r.matchPoints || 0}</td><td>${r.tablePoints || 0}</td><td>${r.extraPoints || 0}</td>
-      <td>${r.currentStreak || 0}</td><td>${r.totalPoints || 0}</td>
+      <td>${r.currentStreak || 0}</td>
+      <td>${r.matchesPredicted || 0}</td><td>${r.correctPredictions || 0}</td><td>${r.perfectPredictions || 0}</td>
+      <td>${r.totalPoints || 0}</td>
     `;
     body.appendChild(tr);
   });
-  if (!snap.size) body.innerHTML = `<tr><td colspan="7" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
+  if (!rows.length) body.innerHTML = `<tr><td colspan="10" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
 
   await loadPlayers(rows); // same leaderboard data, no extra Firestore read for the player cards below
 }
@@ -1074,6 +1121,31 @@ async function setupAwardsForm() {
   };
 }
 
+async function loadAwardsScorersRef() {
+  const wrap = document.getElementById('awardsScorersRef');
+  if (!wrap) return;
+  wrap.innerHTML = '<p class="empty-state">Loading…</p>';
+  try {
+    const snap = await getDoc(doc(db, 'topScorers', 'current'));
+    if (!snap.exists() || !snap.data().items?.length) {
+      wrap.innerHTML = '<p class="empty-state">Top scorers haven\'t synced yet.</p>';
+      return;
+    }
+    const items = snap.data().items.slice(0, 10); // top 10 is plenty for a quick reference
+    wrap.innerHTML = `
+      <div class="table-scroll">
+        <table class="matrix-table scorers-table">
+          <thead><tr><th>#</th><th>Player</th><th>Team</th><th>Goals</th></tr></thead>
+          <tbody>${items.map((s, i) => `<tr><td>${i + 1}</td><td>${s.name}</td><td>${s.team}</td><td class="stat-goals">${s.goals}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) {
+    console.error('loadAwardsScorersRef error:', err);
+    wrap.innerHTML = `<p class="empty-state">⚠️ Couldn't load top scorers. (${err.message || err.code || 'unknown'})</p>`;
+  }
+}
+
 async function loadAwardsCommunity() {
   const container = document.getElementById('awardsCommunity');
   container.innerHTML = '<p class="empty-state">Loading…</p>';
@@ -1161,30 +1233,22 @@ async function loadHighlights() {
 }
 
 // ---------- Badges tab ----------
-async function loadBadges() {
-  const grid = document.getElementById('badgeGrid');
-  if (!currentUser) { grid.innerHTML = `<p class="empty-state">Sign in to see your badge cabinet.</p>`; return; }
-  const snap = await getDoc(doc(db, 'badges', currentUser.uid));
-  const badges = snap.exists() && snap.data().badges ? snap.data().badges : [];
-  if (!badges.length) { grid.innerHTML = `<p class="empty-state">No badges yet — get predicting.</p>`; return; }
-  grid.innerHTML = badges.map(b => `
-    <div class="badge-card">
-      <div class="icon">${BADGE_ICONS[b.name] || '🏅'}</div>
-      <div class="name">${b.name}</div>
-      <div class="meta">${b.context || ''}</div>
-    </div>
-  `).join('');
-}
-
-// ---------- Profile tab ----------
+// ---------- Profile tab (also renders Badges, moved here from its own tab) ----------
 async function loadProfile() {
   if (!currentUser) return;
   document.getElementById('profileName').textContent = `${currentUser.displayName}'s Profile`;
 
-  const [predsSnap, allFixtures, lbSnap] = await Promise.all([
+  const avatarEl = document.getElementById('profileAvatar');
+  if (currentUser.photoURL) {
+    avatarEl.src = currentUser.photoURL;
+    avatarEl.style.display = 'block';
+  }
+
+  const [predsSnap, allFixtures, lbSnap, badgesSnap] = await Promise.all([
     getDocs(query(collection(db, 'predictions'), where('uid', '==', currentUser.uid))),
     getAllFixtures(),
-    getDoc(doc(db, 'leaderboard', currentUser.uid))
+    getDoc(doc(db, 'leaderboard', currentUser.uid)),
+    getDoc(doc(db, 'badges', currentUser.uid))
   ]);
   const fixturesById = {};
   allFixtures.forEach(f => { fixturesById[f.id] = f; });
@@ -1208,22 +1272,65 @@ async function loadProfile() {
     <div class="profile-stat-card"><div class="value">${lb.currentStreak || 0}</div><div class="label">Current Streak</div></div>
   `;
 
+  // Badges (moved here from the old standalone Badges tab)
+  const badgeGrid = document.getElementById('badgeGrid');
+  const badges = badgesSnap.exists() && badgesSnap.data().badges ? badgesSnap.data().badges : [];
+  badgeGrid.innerHTML = badges.length
+    ? badges.map(b => `
+        <div class="badge-card">
+          <div class="icon">${BADGE_ICONS[b.name] || '🏅'}</div>
+          <div class="name">${b.name}</div>
+          <div class="meta">${b.context || ''}</div>
+        </div>
+      `).join('')
+    : '<p class="empty-state">No badges yet — get predicting.</p>';
+
+  // History, grouped by gameweek, each group with its own mini stats header
   const historyEl = document.getElementById('profileHistory');
   if (!preds.length) { historyEl.innerHTML = '<p class="empty-state">No predictions yet — head to Predict Gameweek to get started.</p>'; return; }
-  historyEl.innerHTML = preds.map(p => {
+
+  const byGW = {};
+  preds.forEach(p => {
     const fx = fixturesById[p.fixtureId];
-    if (!fx) return '';
-    let pillClass = 'pending', pillText = 'Pending';
-    if (p.scored) {
-      if (p.points === 25) { pillClass = 'exact'; pillText = 'Exact! +25'; }
-      else if (p.points === 10) { pillClass = 'outcome'; pillText = 'Outcome +10'; }
-      else { pillClass = 'miss'; pillText = 'Missed'; }
-    }
+    if (!fx) return;
+    (byGW[fx.gameweek] = byGW[fx.gameweek] || []).push(p);
+  });
+  const gwNumbers = Object.keys(byGW).map(Number).sort((a, b) => b - a);
+
+  historyEl.innerHTML = gwNumbers.map(gw => {
+    const gwPreds = byGW[gw];
+    const gwScored = gwPreds.filter(p => p.scored);
+    const gwPoints = gwPreds.reduce((sum, p) => sum + (p.points || 0), 0);
+    const gwExact = gwScored.filter(p => p.points === 25).length;
+    const gwCorrect = gwScored.filter(p => p.points === 25 || p.points === 10).length;
+    const gwAccuracy = gwScored.length ? Math.round((gwCorrect / gwScored.length) * 100) : 0;
+
+    const rows = gwPreds.map(p => {
+      const fx = fixturesById[p.fixtureId];
+      let pillClass = 'pending', pillText = 'Pending';
+      if (p.scored) {
+        if (p.points === 25) { pillClass = 'exact'; pillText = 'Exact! +25'; }
+        else if (p.points === 10) { pillClass = 'outcome'; pillText = 'Outcome +10'; }
+        else { pillClass = 'miss'; pillText = 'Missed'; }
+      }
+      return `
+        <div class="history-row">
+          <span>${fx.homeTeam} ${fx.homeScore ?? '?'}–${fx.awayScore ?? '?'} ${fx.awayTeam}</span>
+          <span style="color:var(--chalk-dim);">You said ${p.predHome}–${p.predAway}</span>
+          <span class="result-pill ${pillClass}">${pillText}</span>
+        </div>
+      `;
+    }).join('');
+
     return `
-      <div class="history-row">
-        <span>GW${fx.gameweek} · ${fx.homeTeam} ${fx.homeScore ?? '?'}–${fx.awayScore ?? '?'} ${fx.awayTeam}</span>
-        <span style="color:var(--chalk-dim);">You said ${p.predHome}–${p.predAway}</span>
-        <span class="result-pill ${pillClass}">${pillText}</span>
+      <div class="profile-gw-group">
+        <h3 class="section-title" style="margin-top:0;">Gameweek ${gw}</h3>
+        <div class="profile-gw-stats">
+          <span><strong>${gwPoints}</strong> points</span>
+          <span><strong>${gwExact}</strong> exact</span>
+          <span><strong>${gwAccuracy}%</strong> accuracy${gwScored.length < gwPreds.length ? ' (partial — some still pending)' : ''}</span>
+        </div>
+        ${rows}
       </div>
     `;
   }).join('');

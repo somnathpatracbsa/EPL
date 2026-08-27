@@ -45,7 +45,7 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if true;
       allow create, update: if request.auth != null && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['email', 'displayName', 'joinedAt']);
+        && request.resource.data.keys().hasOnly(['email', 'displayName', 'joinedAt', 'photoURL']);
     }
 
     // ---------- Match predictions: owner-only write, points/scored locked to false at write time ----------
