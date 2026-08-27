@@ -62,7 +62,7 @@ async function getAllFixtures(forceRefresh = false) {
 }
 
 const PL_TEAMS_DEFAULT = [
-  "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton", "Chelsea",
+  "Arsenal", "Aston Villa", "Bournemouth", "Brentford", "Brighton & Hove Albion", "Chelsea",
   "Coventry City", "Crystal Palace", "Everton", "Fulham", "Hull City", "Ipswich Town",
   "Leeds United", "Liverpool", "Manchester City", "Manchester United", "Newcastle United",
   "Nottingham Forest", "Sunderland", "Tottenham Hotspur"
@@ -139,10 +139,26 @@ function positionZoneClass(pos, total) {
   return '';
 }
 
+// Shared team-name normalizer, used everywhere we match a name from the API against a name
+// saved in a prediction. Brighton needs a manual alias since its short/common name ("Brighton")
+// doesn't survive normal FC/AFC-suffix stripping against the API's full "Brighton & Hove Albion
+// FC" — this was the root cause of a scrambled Table tab (a failed match cascaded into every
+// other team's position shifting). orderTeams() below previously did an exact-string match with
+// no normalization at all, which likely never correctly matched any team against the API names.
+const NAME_ALIASES = { 'brighton': 'brightonhovealbion' };
+function normalizeTeamName(name) {
+  let n = String(name || '').toLowerCase().replace(/fc|afc|&/g, '').replace(/[^a-z0-9]/g, '').trim();
+  return NAME_ALIASES[n] || n;
+}
+
 function orderTeams(teams) {
   if (!standingsOrder || !standingsOrder.length) return [...teams].sort();
-  const rank = new Map(standingsOrder.map((t, i) => [t, i]));
-  return [...teams].sort((a, b) => (rank.has(a) ? rank.get(a) : 999) - (rank.has(b) ? rank.get(b) : 999));
+  const rankOf = (teamName) => {
+    const norm = normalizeTeamName(teamName);
+    const idx = standingsOrder.findIndex(s => normalizeTeamName(s) === norm);
+    return idx === -1 ? Infinity : idx;
+  };
+  return [...teams].sort((a, b) => rankOf(a) - rankOf(b));
 }
 
 function matchStatusLine(fx, locked) {
@@ -761,27 +777,21 @@ async function loadAllTables() {
 
     playerEntries.sort((a, b) => a.name.localeCompare(b.name));
 
-    // Normalize team names so "Arsenal" / "Arsenal FC" / etc. still match up correctly
-    const normalize = name => String(name || '').toLowerCase().replace(/fc|afc|&/g, '').replace(/[^a-z0-9]/g, '').trim();
-
     // cfg.standingsOrder comes straight from automation/sync-and-score.js's syncStandingsOrder(),
     // which writes it to config/current on every hourly run — this is the real current league order.
-    let sortedLiveTeams = [];
-    if (cfg.standingsOrder && cfg.standingsOrder.length) {
-      const predictionTeamsArray = [...allTeams];
-      sortedLiveTeams = cfg.standingsOrder
-        .map(standingName => {
-          const normStanding = normalize(standingName);
-          return predictionTeamsArray.find(pt => normalize(pt) === normStanding);
-        })
-        .filter(Boolean);
-      // Catch any predicted team that didn't match (name mismatch) so it's not silently dropped from the table
-      predictionTeamsArray.forEach(t => { if (!sortedLiveTeams.includes(t)) sortedLiveTeams.push(t); });
-    }
-
-    const teamRows = sortedLiveTeams.length ? sortedLiveTeams : [...allTeams].sort();
+    // Ranks are computed independently per team (not by filtering a shared array) so one name
+    // mismatch can never cascade into shifting every other team's position — see normalizeTeamName above.
+    const standingsOrderList = cfg.standingsOrder || [];
+    const rankOf = (teamName) => {
+      const norm = normalizeTeamName(teamName);
+      const idx = standingsOrderList.findIndex(s => normalizeTeamName(s) === norm);
+      return idx === -1 ? Infinity : idx;
+    };
+    const usingFallback = standingsOrderList.length === 0;
+    const teamRows = usingFallback
+      ? [...allTeams].sort()
+      : [...allTeams].sort((a, b) => rankOf(a) - rankOf(b));
     const totalTeams = teamRows.length;
-    const usingFallback = sortedLiveTeams.length === 0;
 
     const fallbackNotice = usingFallback
       ? `<p class="empty-state" style="margin-bottom:10px;">⚠️ Live standings haven't synced to this site yet (showing alphabetical order for now) — check that the automation workflow has run recently and that <code>config/current</code> has a <code>standingsOrder</code> field in Firestore.</p>`
