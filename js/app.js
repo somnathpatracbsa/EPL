@@ -99,7 +99,6 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   if (btn.dataset.tab === 'awards') { loadAwardsCommunity(); loadAwardsScorersRef(); }
   if (btn.dataset.tab === 'profile') loadProfile();
   if (btn.dataset.tab === 'home') loadHome();
-  if (btn.dataset.tab === 'scorers') loadTopScorers();
 });
 
 async function loadHome() {
@@ -1180,41 +1179,6 @@ async function loadAwardsCommunity() {
       : '<p class="empty-state">No picks yet</p>');
     container.appendChild(div);
   });
-}
-
-// ---------- Top Scorers tab ----------
-async function loadTopScorers() {
-  const wrap = document.getElementById('scorersTableWrap');
-  wrap.innerHTML = '<p class="empty-state">Loading…</p>';
-  try {
-    const snap = await getDoc(doc(db, 'topScorers', 'current'));
-    if (!snap.exists() || !snap.data().items?.length) {
-      wrap.innerHTML = '<p class="empty-state">Top scorers haven\'t synced yet — this populates automatically from the next automation run.</p>';
-      return;
-    }
-    const items = snap.data().items;
-    const rows = items.map((s, i) => `
-      <tr>
-        <td>${i + 1}</td>
-        <td>${s.name}</td>
-        <td>${s.team}</td>
-        <td class="stat-goals">${s.goals}</td>
-        <td>${s.assists ?? '–'}</td>
-        <td>${s.playedMatches ?? '–'}</td>
-      </tr>
-    `).join('');
-    wrap.innerHTML = `
-      <div class="table-scroll">
-        <table class="matrix-table scorers-table">
-          <thead><tr><th>#</th><th>Player</th><th>Team</th><th>Goals</th><th>Assists</th><th>Played</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `;
-  } catch (err) {
-    console.error('loadTopScorers error:', err);
-    wrap.innerHTML = `<p class="empty-state">⚠️ Couldn't load top scorers right now. (Error: ${err.message || err.code || 'unknown'})</p>`;
-  }
 }
 
 // ---------- Highlights tab ----------
