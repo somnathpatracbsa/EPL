@@ -941,9 +941,14 @@ async function loadCommunity(showAll = false) {
         const info = outcomeInfo(p.predHome, p.predAway, fx.homeTeam, fx.awayTeam);
         let resultIcon = '';
         if (isFinished) {
-          resultIcon = info.kind === actual.kind
-            ? '<span class="result-tick" title="Outcome correct">✅</span>'
-            : '<span class="result-cross" title="Outcome incorrect">❌</span>';
+          const isExact = p.predHome === fx.homeScore && p.predAway === fx.awayScore;
+          if (isExact) {
+            resultIcon = '<span class="result-bullseye" title="Perfect prediction — exact score">🎯</span>';
+          } else if (info.kind === actual.kind) {
+            resultIcon = '<span class="result-tick" title="Correct outcome, wrong scoreline">✅</span>';
+          } else {
+            resultIcon = '<span class="result-cross" title="Wrong outcome">❌</span>';
+          }
         }
         const isMine = currentUser && p.uid === currentUser.uid;
         return `<tr class="${isMine ? 'my-prediction-row' : ''}">

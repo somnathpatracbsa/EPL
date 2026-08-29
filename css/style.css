@@ -443,6 +443,7 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .ft-result-line { margin-bottom: 10px; font-weight: 700; font-size: 13px; }
 .result-tick { color: var(--turf-bright); }
 .result-cross { color: var(--card-red); }
+.result-bullseye { filter: drop-shadow(0 0 2px rgba(255,182,39,0.6)); }
 
 /* ---------- Leaderboard ---------- */
 .leaderboard-table { width: 100%; border-collapse: collapse; }

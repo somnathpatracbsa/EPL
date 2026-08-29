@@ -474,6 +474,10 @@ async function main() {
   // Run scoreTablePredictions(SCORING.FINAL_WEIGHT) once the season is confirmed over —
   // trigger manually via workflow_dispatch the week the season ends.
 
+  // Written every run regardless of whether a rebuild happened — the staleness-check workflow
+  // uses this to detect if GitHub's scheduler (or the external cron pinger) has gone quiet.
+  await configRef.set({ lastSyncAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+
   console.log('Sync complete.');
 }
 

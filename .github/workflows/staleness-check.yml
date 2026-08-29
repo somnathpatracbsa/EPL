@@ -1,0 +1,32 @@
+name: Staleness Check
+
+on:
+  schedule:
+    # Every 3 hours. This is itself subject to the same GitHub scheduler unreliability it's
+    # meant to guard against — see the caveat in check-staleness.js. A generous interval and
+    # threshold means it should still reliably catch genuine multi-hour outages even if this
+    # check itself runs a bit late.
+    - cron: '0 */3 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: automation
+        run: npm install
+
+      - name: Check sync staleness
+        working-directory: automation
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node check-staleness.js
