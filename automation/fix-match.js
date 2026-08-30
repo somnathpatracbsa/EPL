@@ -79,6 +79,16 @@ async function main() {
 
   await batch.commit();
   console.log(`\nScored ${scoredCount} predictions for match ${MATCH_ID}.`);
+
+  // Clear lastLeaderboardRebuildDate so the next sync run is forced to do a full leaderboard
+  // rebuild even if it already rebuilt earlier today. Without this, the sync sees
+  // "Scored 0 predictions this run + already rebuilt today" and skips the rebuild, leaving
+  // the leaderboard stale despite the predictions having just been scored here.
+  await db.collection('config').doc('current').set(
+    { lastLeaderboardRebuildDate: null },
+    { merge: true }
+  );
+  console.log('Cleared lastLeaderboardRebuildDate — the next sync will force a full leaderboard rebuild.');
   console.log('Now trigger "Sync & Score EPL Predictions" to rebuild the leaderboard, badges and highlights.');
 }
 
