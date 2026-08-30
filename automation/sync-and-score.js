@@ -47,8 +47,23 @@ async function syncFixtures() {
   // matter what caused a bad read (a transient API glitch, an overlapping/racing run, anything).
   // This query is bounded by how many matches have finished so far this season — much cheaper
   // than reading the whole fixtures collection, and only grows gradually as the season goes on.
+  //
+  // We also capture the canonical scores from these Firestore docs. This is critical: when the
+  // API glitches and returns TIMED for a finished match, it also returns null scores. If we only
+  // corrected the status (as before) but left the null scores in place, scoreFinishedMatches()
+  // would either award 0 points to everyone or produce wrong outcomes — the scores it uses to
+  // judge predictions would all be null. By pulling the true scores from Firestore here (where
+  // they were correctly written during the run that first marked the match FINISHED), we ensure
+  // the entire in-memory view is canonical, not just the status field.
   const alreadyFinishedSnap = await db.collection('fixtures').where('status', '==', 'FINISHED').get();
   const alreadyFinishedIds = new Set(alreadyFinishedSnap.docs.map(d => d.id));
+  // id -> { homeScore, awayScore } from the last good write — used to restore scores when the
+  // API regresses a match back to TIMED/SCHEDULED and sends null scores in the same response.
+  const firestoreScores = {};
+  alreadyFinishedSnap.docs.forEach(d => {
+    const data = d.data();
+    firestoreScores[d.id] = { homeScore: data.homeScore, awayScore: data.awayScore };
+  });
 
   const batch = db.batch();
   let count = 0, skippedRegressions = 0;
@@ -71,19 +86,26 @@ async function syncFixtures() {
   await batch.commit();
   console.log(`Synced ${count} fixtures${skippedRegressions ? ` (skipped ${skippedRegressions} would-be regression${skippedRegressions === 1 ? '' : 's'})` : ''}.`);
 
-  // Return a corrected copy of the matches array: any match that Firestore already confirmed
-  // as FINISHED is forced back to FINISHED here, even if the API returned something else this
-  // run. This ensures that fixturesInMemory in main() — and everything downstream that reads
-  // it (scoring, leaderboard, currentGameweek, badges, highlights) — all operate on the true
-  // canonical status rather than a potentially-glitched API value. Without this correction the
-  // safety guard above would correctly protect Firestore, but the in-memory view would still
-  // reflect the bad status, causing finished matches to be silently skipped by the scorer and
-  // the currentGameweek to be miscalculated.
-  const correctedMatches = data.matches.map(m =>
-    (alreadyFinishedIds.has(String(m.id)) && m.status !== 'FINISHED')
-      ? { ...m, status: 'FINISHED' }
-      : m
-  );
+  // Return a corrected copy of the matches array: any match that Firestore already confirmed as
+  // FINISHED gets both its status AND its scores restored from Firestore's canonical data,
+  // overriding whatever (potentially null/wrong) values the API returned this run. Everything
+  // downstream — scoreFinishedMatches, scoreGwExtras, updateLeaderboard, currentGameweek,
+  // badges, highlights — all read from this corrected array, so they all see the true result.
+  const correctedMatches = data.matches.map(m => {
+    const id = String(m.id);
+    if (alreadyFinishedIds.has(id) && m.status !== 'FINISHED') {
+      const scores = firestoreScores[id] || {};
+      return {
+        ...m,
+        status: 'FINISHED',
+        score: {
+          ...m.score,
+          fullTime: { home: scores.homeScore ?? m.score.fullTime.home, away: scores.awayScore ?? m.score.fullTime.away }
+        }
+      };
+    }
+    return m;
+  });
 
   const upcoming = correctedMatches
     .filter(m => m.status !== 'FINISHED')
