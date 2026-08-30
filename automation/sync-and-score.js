@@ -71,13 +71,27 @@ async function syncFixtures() {
   await batch.commit();
   console.log(`Synced ${count} fixtures${skippedRegressions ? ` (skipped ${skippedRegressions} would-be regression${skippedRegressions === 1 ? '' : 's'})` : ''}.`);
 
-  const upcoming = data.matches
-    .filter(m => m.status !== 'FINISHED' && !alreadyFinishedIds.has(String(m.id))) // trust Firestore's confirmed FINISHED over a single possibly-glitchy read
+  // Return a corrected copy of the matches array: any match that Firestore already confirmed
+  // as FINISHED is forced back to FINISHED here, even if the API returned something else this
+  // run. This ensures that fixturesInMemory in main() — and everything downstream that reads
+  // it (scoring, leaderboard, currentGameweek, badges, highlights) — all operate on the true
+  // canonical status rather than a potentially-glitched API value. Without this correction the
+  // safety guard above would correctly protect Firestore, but the in-memory view would still
+  // reflect the bad status, causing finished matches to be silently skipped by the scorer and
+  // the currentGameweek to be miscalculated.
+  const correctedMatches = data.matches.map(m =>
+    (alreadyFinishedIds.has(String(m.id)) && m.status !== 'FINISHED')
+      ? { ...m, status: 'FINISHED' }
+      : m
+  );
+
+  const upcoming = correctedMatches
+    .filter(m => m.status !== 'FINISHED')
     .sort((a, b) => a.matchday - b.matchday);
   if (upcoming.length) {
     await db.collection('config').doc('current').set({ currentGameweek: upcoming[0].matchday }, { merge: true });
   }
-  return data.matches;
+  return correctedMatches;
 }
 
 // ---------- 2. Score newly finished matches ----------
