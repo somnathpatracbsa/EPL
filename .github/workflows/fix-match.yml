@@ -1,0 +1,53 @@
+name: Fix Match (Manual Correction)
+
+# Manually trigger this workflow when a specific match is stuck with wrong/null data
+# in Firestore (e.g. the football-data.org API returned stale TIMED status for a
+# finished match and the normal sync never wrote the real result).
+#
+# Steps to use:
+#   1. Go to Actions -> "Fix Match (Manual Correction)" -> Run workflow
+#   2. Enter the match ID (Firestore doc ID / football-data.org match ID)
+#   3. Enter the correct final home and away scores
+#   4. Run — the workflow will update Firestore and score any unscored predictions
+#   5. After it completes, trigger "Sync & Score EPL Predictions" to rebuild the leaderboard
+
+on:
+  workflow_dispatch:
+    inputs:
+      match_id:
+        description: 'Match ID (Firestore doc ID, e.g. 560552)'
+        required: true
+        type: string
+      home_score:
+        description: 'Home team final score'
+        required: true
+        type: number
+      away_score:
+        description: 'Away team final score'
+        required: true
+        type: number
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: automation
+        run: npm install
+
+      - name: Apply fix
+        working-directory: automation
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MATCH_ID: ${{ github.event.inputs.match_id }}
+          HOME_SCORE: ${{ github.event.inputs.home_score }}
+          AWAY_SCORE: ${{ github.event.inputs.away_score }}
+        run: node fix-match.js

@@ -12,6 +12,19 @@ on:
   # native schedule eliminates that race at the source.
   workflow_dispatch: {}
 
+# CRITICAL — prevents overlapping runs from racing each other on Firestore.
+#
+# The root cause of finished matches reverting to TIMED: Guard 1 in sync-and-score.js
+# reads the set of already-FINISHED matches from Firestore at the START of a run. If two
+# runs start at nearly the same time (e.g. cron-job.org retries a failed dispatch, or a
+# manual re-run overlaps with the hourly trigger), BOTH reads happen before EITHER run has
+# committed. So Guard 1 sees an empty (or stale) alreadyFinishedIds in the second run and
+# lets the bad API write through. cancel-in-progress: false queues the second run rather
+# than discarding it, so no hourly update is ever skipped — the runs just serialise.
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest

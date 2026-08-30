@@ -65,32 +65,112 @@ async function syncFixtures() {
     firestoreScores[d.id] = { homeScore: data.homeScore, awayScore: data.awayScore };
   });
 
+  // A match cannot still be "not started" hours after its scheduled kickoff — if the API
+  // says TIMED or SCHEDULED for a match that kicked off more than 3 hours ago, that is
+  // definitively stale/wrong data. 3 hours covers the longest possible match (90 min +
+  // stoppage + extra time + penalties + a buffer). We skip writing these to Firestore
+  // entirely: the existing Firestore value — whatever it is — is more trustworthy than
+  // an API response that claims the match hasn't started yet when it clearly has.
+  const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+
   const batch = db.batch();
-  let count = 0, skippedRegressions = 0;
+  let count = 0, skippedRegressions = 0, skippedStalePastKickoff = 0;
+  // Track match IDs we're skipping due to past-kickoff staleness, so correctedMatches
+  // can treat them the same way as alreadyFinishedIds (restore from Firestore if known).
+  const stalePastKickoffIds = new Set();
   for (const m of data.matches) {
     const id = String(m.id);
+    // Guard 1: already FINISHED in Firestore — never overwrite with a regressed status
     if (alreadyFinishedIds.has(id) && m.status !== 'FINISHED') {
       console.warn(`Skipping match ${id}: already FINISHED in Firestore, but this API response says ${m.status}. Not overwriting — this is likely a transient API glitch or an overlapping run, not a real result reversal.`);
       skippedRegressions++;
       continue;
     }
+    // Guard 2: past-kickoff but TIMED/SCHEDULED — the API is returning stale data
+    const isPastKickoff = (m.status === 'TIMED' || m.status === 'SCHEDULED') &&
+                          (nowMs - new Date(m.utcDate).getTime()) > THREE_HOURS_MS;
+    if (isPastKickoff) {
+      console.warn(`Skipping match ${id} (${m.homeTeam.name} vs ${m.awayTeam.name}, kickoff ${m.utcDate}): API says ${m.status} but kickoff was >3 hours ago — this is stale API data. Not writing null scores to Firestore.`);
+      stalePastKickoffIds.add(id);
+      skippedStalePastKickoff++;
+      continue;
+    }
     const ref = db.collection('fixtures').doc(id);
+    // Use existing Firestore scores as a fallback when the API returns null — this guards
+    // against the football-data.org API returning status=FINISHED but score=null (which
+    // can happen transiently). Guard 1 above only fires when status != FINISHED, so a
+    // FINISHED+null response slips through and would otherwise wipe real scores. The
+    // concurrency block in sync.yml is the primary race-condition fix; this is a
+    // belt-and-suspenders safeguard for the API's own data quality issues.
+    const existingScore = firestoreScores[id];
+    const homeScore = m.score.fullTime.home ?? existingScore?.homeScore ?? null;
+    const awayScore = m.score.fullTime.away ?? existingScore?.awayScore ?? null;
     batch.set(ref, {
       gameweek: m.matchday, homeTeam: m.homeTeam.name, awayTeam: m.awayTeam.name,
       kickoffUTC: m.utcDate, status: m.status,
-      homeScore: m.score.fullTime.home, awayScore: m.score.fullTime.away
+      homeScore,
+      awayScore
     }, { merge: true });
     count++;
     if (count % 400 === 0) await batch.commit();
   }
   await batch.commit();
-  console.log(`Synced ${count} fixtures${skippedRegressions ? ` (skipped ${skippedRegressions} would-be regression${skippedRegressions === 1 ? '' : 's'})` : ''}.`);
+  const skippedTotal = skippedRegressions + skippedStalePastKickoff;
+  console.log(`Synced ${count} fixtures${skippedTotal ? ` (skipped ${skippedRegressions} status-regression${skippedRegressions === 1 ? '' : 's'}, ${skippedStalePastKickoff} stale-past-kickoff)` : ''}.`);
 
-  // Return a corrected copy of the matches array: any match that Firestore already confirmed as
-  // FINISHED gets both its status AND its scores restored from Firestore's canonical data,
-  // overriding whatever (potentially null/wrong) values the API returned this run. Everything
-  // downstream — scoreFinishedMatches, scoreGwExtras, updateLeaderboard, currentGameweek,
-  // badges, highlights — all read from this corrected array, so they all see the true result.
+  // AUTO-HEAL PASS — for every match the bulk endpoint returned as TIMED/SCHEDULED despite
+  // having a kickoff more than 3 hours ago, fetch the individual match endpoint. The bulk
+  // endpoint is more aggressively cached on football-data.org's side and is the root cause
+  // of these stale reads; the per-match endpoint (/v4/matches/{id}) bypasses that cache and
+  // consistently returns the correct FINISHED result. If confirmed, write straight to Firestore
+  // and promote into alreadyFinishedIds so correctedMatches (and everything downstream —
+  // scoreFinishedMatches, leaderboard, badges) sees the real result in this same run, with no
+  // manual intervention required.
+  if (stalePastKickoffIds.size) {
+    console.log(`Auto-heal: checking ${stalePastKickoffIds.size} past-kickoff stuck match(es) via individual endpoint...`);
+    let healedCount = 0;
+    for (const id of stalePastKickoffIds) {
+      try {
+        // Respect the free-tier rate limit (10 req/min) — bulk + standings + scorers = 3 calls
+        // already used; a 400 ms gap keeps us well clear even with several stuck matches.
+        await new Promise(r => setTimeout(r, 400));
+        const matchData = await apiFetch(`/matches/${id}`);
+        if (!matchData || matchData.status !== 'FINISHED') {
+          console.warn(`Auto-heal: match ${id} still shows ${matchData?.status ?? 'unknown'} on individual endpoint — cannot auto-fix.`);
+          continue;
+        }
+        const healedHome = matchData.score?.fullTime?.home;
+        const healedAway = matchData.score?.fullTime?.away;
+        if (healedHome === null || healedHome === undefined) {
+          console.warn(`Auto-heal: match ${id} individual endpoint says FINISHED but scores are still null — skipping.`);
+          continue;
+        }
+        // Write the confirmed result to Firestore
+        await db.collection('fixtures').doc(id).set(
+          { status: 'FINISHED', homeScore: healedHome, awayScore: healedAway },
+          { merge: true }
+        );
+        // Promote into alreadyFinishedIds and firestoreScores so correctedMatches uses this data
+        alreadyFinishedIds.add(id);
+        firestoreScores[id] = { homeScore: healedHome, awayScore: healedAway };
+        stalePastKickoffIds.delete(id);
+        healedCount++;
+        console.log(`Auto-heal: match ${id} healed — FINISHED ${healedHome}-${healedAway} (confirmed via individual endpoint).`);
+      } catch (err) {
+        console.error(`Auto-heal: failed for match ${id}: ${err.message}`);
+      }
+    }
+    if (healedCount) console.log(`Auto-heal complete: ${healedCount} match(es) fixed this run.`);
+    else console.log('Auto-heal: no matches could be healed from the individual endpoint this run.');
+  }
+
+  // Build the corrected in-memory matches array. Any match now in alreadyFinishedIds
+  // (either was already there, or was just promoted by the auto-heal pass above) gets its
+  // status and scores restored from firestoreScores — overriding whatever null/stale values
+  // the bulk API returned. stalePastKickoffIds now only contains matches that were past-kickoff
+  // TIMED AND whose individual endpoint also couldn't confirm a result; these are left as-is
+  // (the downstream scorer skips them — correct, since we have no verified score yet).
   const correctedMatches = data.matches.map(m => {
     const id = String(m.id);
     if (alreadyFinishedIds.has(id) && m.status !== 'FINISHED') {
