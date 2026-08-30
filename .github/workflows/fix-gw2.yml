@@ -1,0 +1,73 @@
+name: Fix GW2 Stuck Matches (One-Click)
+
+# Patches 4 GW2 matches that football-data.org has not updated after 24h+.
+# Both the bulk and individual API endpoints confirm TIMED with null scores —
+# this is a data bug on their side, not ours. Scores verified independently.
+#
+# Steps:
+#   1. Push this file, then go to Actions -> "Fix GW2 Stuck Matches" -> Run workflow
+#   2. After it completes, trigger "Sync & Score EPL Predictions" to rebuild the leaderboard
+#   3. This file can be deleted afterwards — it is a one-time fix
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: automation
+        run: npm install
+
+      - name: "Liverpool FC 2-2 Nottingham Forest FC"
+        working-directory: automation
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          MATCH_ID: "560552"
+          HOME_SCORE: "2"
+          AWAY_SCORE: "2"
+        run: node fix-match.js
+
+      - name: "AFC Bournemouth 1-1 Everton FC"
+        working-directory: automation
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          MATCH_ID: "560560"
+          HOME_SCORE: "1"
+          AWAY_SCORE: "1"
+        run: node fix-match.js
+
+      - name: "Coventry City FC 0-1 Hull City AFC"
+        working-directory: automation
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          MATCH_ID: "560561"
+          HOME_SCORE: "0"
+          AWAY_SCORE: "1"
+        run: node fix-match.js
+
+      - name: "Tottenham Hotspur FC 0-2 Newcastle United FC"
+        working-directory: automation
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          MATCH_ID: "560558"
+          HOME_SCORE: "0"
+          AWAY_SCORE: "2"
+        run: node fix-match.js
