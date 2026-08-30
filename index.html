@@ -90,19 +90,14 @@
 
       <div class="gw-extras" id="gwExtras" style="display:none;">
         <h2 class="section-title">⚡ Gameweek Extras</h2>
-        <p class="sub">Team predictions here are auto-scored. Player picks are for bragging rights — free-text guesses, judged on the honour system since detailed player stats aren't in the free data feed.</p>
+        <p class="sub">Auto-scored based on real results.</p>
+        <div id="gwExtrasLockNote" class="crowd-locked-note" style="display:none;"></div>
         <div class="extras-grid">
           <label>Highest scoring team this gameweek
             <select id="topScoringTeam"></select>
           </label>
           <label>A team that keeps a clean sheet
             <select id="cleanSheetTeam"></select>
-          </label>
-          <label>Top scoring player this gameweek <span class="tag-manual">manual</span>
-            <input type="text" id="topScoringPlayer" placeholder="e.g. Erling Haaland" />
-          </label>
-          <label>A goalkeeper who keeps a clean sheet <span class="tag-manual">manual</span>
-            <input type="text" id="cleanSheetPlayer" placeholder="e.g. Alisson" />
           </label>
         </div>
         <button id="saveExtrasBtn" class="btn btn-primary">Save Gameweek Extras</button>

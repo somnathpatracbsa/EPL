@@ -161,16 +161,6 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 }
 
 .empty-state { color: var(--chalk-dim); font-style: italic; }
-.tag-manual {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--violet);
-  border: 1px solid var(--violet);
-  border-radius: 4px;
-  padding: 1px 5px;
-  margin-left: 6px;
-  vertical-align: middle;
-}
 
 /* ---------- Fixture / prediction cards ---------- */
 .save-all-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -434,7 +424,7 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .community-fixture td.player-name { text-align: left; }
 .community-fixture td.score-cell { font-family: var(--font-mono); font-weight: 700; text-align: right; white-space: nowrap; }
 .community-fixture td.outcome-cell { font-weight: 600; font-size: 12px; text-align: left; padding-left: 14px; }
-.community-fixture td.result-icon { text-align: center; width: 28px; font-size: 13px; }
+.community-fixture td.result-icon { text-align: center; width: 52px; font-size: 13px; white-space: nowrap; }
 
 /* Outcome coloring, shared between per-prediction rows and the FT result line */
 .outcome-home { color: var(--turf-bright); }

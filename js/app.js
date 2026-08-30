@@ -520,18 +520,29 @@ async function setupGwExtras(fixtures) {
   const csSel = document.getElementById('cleanSheetTeam');
   [topSel, csSel].forEach(sel => { sel.innerHTML = teams.map(t => `<option value="${t}">${t}</option>`).join(''); });
 
+  // Locks the moment any match in this gameweek has kicked off — same cutoff logic used for
+  // individual fixture cards, since the "highest scoring team" / "clean sheet" guesses stop
+  // being meaningful predictions once matches are already underway.
+  const gwLocked = fixtures.some(fx => new Date(fx.kickoffUTC) <= new Date() || (fx.status !== 'SCHEDULED' && fx.status !== 'TIMED'));
+
   const ref = doc(db, 'gwExtraPredictions', `${currentUser.uid}_${currentGW}`);
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const d = snap.data();
     topSel.value = d.topScoringTeam || teams[0];
     csSel.value = d.cleanSheetTeam || teams[0];
-    document.getElementById('topScoringPlayer').value = d.topScoringPlayerGuess || '';
-    document.getElementById('cleanSheetPlayer').value = d.cleanSheetPlayerGuess || '';
   }
   document.getElementById('gwExtras').style.display = 'block';
 
-  document.getElementById('saveExtrasBtn').onclick = async () => {
+  const lockNote = document.getElementById('gwExtrasLockNote');
+  const saveBtn = document.getElementById('saveExtrasBtn');
+  topSel.disabled = gwLocked;
+  csSel.disabled = gwLocked;
+  saveBtn.style.display = gwLocked ? 'none' : 'inline-block';
+  lockNote.style.display = gwLocked ? 'block' : 'none';
+  if (gwLocked) lockNote.textContent = '🔒 Locked — a match in this gameweek has already kicked off.';
+
+  saveBtn.onclick = async () => {
     await saveGwExtras();
     celebrate('Extras locked in! 🎯');
   };
@@ -540,13 +551,12 @@ async function setupGwExtras(fixtures) {
 async function saveGwExtras() {
   const topSel = document.getElementById('topScoringTeam');
   const csSel = document.getElementById('cleanSheetTeam');
+  if (topSel.disabled || csSel.disabled) return false; // locked — a match has already kicked off
   if (!topSel.value || !csSel.value) return false;
   const ref = doc(db, 'gwExtraPredictions', `${currentUser.uid}_${currentGW}`);
   await setDoc(ref, {
     uid: currentUser.uid, gameweek: currentGW,
     topScoringTeam: topSel.value, cleanSheetTeam: csSel.value,
-    topScoringPlayerGuess: document.getElementById('topScoringPlayer').value.trim(),
-    cleanSheetPlayerGuess: document.getElementById('cleanSheetPlayer').value.trim(),
     scored: false, points: 0, submittedAt: serverTimestamp()
   });
   document.getElementById('extrasStatus').textContent = 'Saved ✓';
@@ -943,7 +953,7 @@ async function loadCommunity(showAll = false) {
         if (isFinished) {
           const isExact = p.predHome === fx.homeScore && p.predAway === fx.awayScore;
           if (isExact) {
-            resultIcon = '<span class="result-bullseye" title="Perfect prediction — exact score">🎯</span>';
+            resultIcon = '<span class="result-bullseye" title="Perfect prediction — exact score">🎯</span> <span class="result-tick" title="Correct outcome">✅</span>';
           } else if (info.kind === actual.kind) {
             resultIcon = '<span class="result-tick" title="Correct outcome, wrong scoreline">✅</span>';
           } else {

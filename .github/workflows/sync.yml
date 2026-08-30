@@ -1,12 +1,15 @@
 name: Sync & Score EPL Predictions
 
 on:
-  schedule:
-    # Hourly. The previous */10-minute schedule combined with 4 redundant full-collection
-    # reads of `fixtures` per run (now fixed in sync-and-score.js) blew through Firestore's
-    # free daily quota — roughly 55,000 writes/day against a 20,000 cap, and 200,000+ reads/day
-    # against a 50,000 cap. Hourly + the read fix brings this comfortably under both caps.
-    - cron: '0 * * * *'
+  # No native `schedule:` trigger here anymore — an external cron service (cron-job.org) calls
+  # this workflow's dispatch API every hour instead, since GitHub's own scheduled triggers are
+  # documented as "best effort" and were observed going many hours late in practice. Keeping
+  # BOTH active was a real risk, not just redundant: if GitHub's scheduler happened to fire
+  # around the same time as the external trigger, two overlapping runs could race each other
+  # writing to Firestore, and — combined with any momentary inconsistency in the API's own
+  # data between those two near-simultaneous calls — a stale write landing second could revert
+  # a match that was already correctly marked FINISHED back to an earlier status. Removing the
+  # native schedule eliminates that race at the source.
   workflow_dispatch: {}
 
 jobs:

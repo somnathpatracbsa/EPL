@@ -42,10 +42,24 @@ async function syncFixtures() {
   const data = await apiFetch(`/competitions/${COMPETITION}/matches`);
   if (!data || !data.matches) return;
 
+  // SAFETY GUARD: a real-world match can never "un-finish" — if this ever shows up in Firestore
+  // as already FINISHED, no later sync should be able to revert it to an earlier status, no
+  // matter what caused a bad read (a transient API glitch, an overlapping/racing run, anything).
+  // This query is bounded by how many matches have finished so far this season — much cheaper
+  // than reading the whole fixtures collection, and only grows gradually as the season goes on.
+  const alreadyFinishedSnap = await db.collection('fixtures').where('status', '==', 'FINISHED').get();
+  const alreadyFinishedIds = new Set(alreadyFinishedSnap.docs.map(d => d.id));
+
   const batch = db.batch();
-  let count = 0;
+  let count = 0, skippedRegressions = 0;
   for (const m of data.matches) {
-    const ref = db.collection('fixtures').doc(String(m.id));
+    const id = String(m.id);
+    if (alreadyFinishedIds.has(id) && m.status !== 'FINISHED') {
+      console.warn(`Skipping match ${id}: already FINISHED in Firestore, but this API response says ${m.status}. Not overwriting — this is likely a transient API glitch or an overlapping run, not a real result reversal.`);
+      skippedRegressions++;
+      continue;
+    }
+    const ref = db.collection('fixtures').doc(id);
     batch.set(ref, {
       gameweek: m.matchday, homeTeam: m.homeTeam.name, awayTeam: m.awayTeam.name,
       kickoffUTC: m.utcDate, status: m.status,
@@ -55,9 +69,11 @@ async function syncFixtures() {
     if (count % 400 === 0) await batch.commit();
   }
   await batch.commit();
-  console.log(`Synced ${count} fixtures.`);
+  console.log(`Synced ${count} fixtures${skippedRegressions ? ` (skipped ${skippedRegressions} would-be regression${skippedRegressions === 1 ? '' : 's'})` : ''}.`);
 
-  const upcoming = data.matches.filter(m => m.status !== 'FINISHED').sort((a, b) => a.matchday - b.matchday);
+  const upcoming = data.matches
+    .filter(m => m.status !== 'FINISHED' && !alreadyFinishedIds.has(String(m.id))) // trust Firestore's confirmed FINISHED over a single possibly-glitchy read
+    .sort((a, b) => a.matchday - b.matchday);
   if (upcoming.length) {
     await db.collection('config').doc('current').set({ currentGameweek: upcoming[0].matchday }, { merge: true });
   }
