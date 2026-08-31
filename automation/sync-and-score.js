@@ -9,9 +9,7 @@
  *   FOOTBALL_DATA_API_KEY      - free API key from football-data.org
  */
 
-import admin from 'firebase-admin';
-
-const SCORING = {
+import admin from 'firebase-admin';const SCORING = {
   EXACT_SCORE_POINTS: 25,
   CORRECT_OUTCOME_POINTS: 10,
   STREAK_TIERS: [ { min: 10, bonus: 20 }, { min: 5, bonus: 10 }, { min: 3, bonus: 5 } ], // highest tier reached applies — not cumulative
@@ -20,7 +18,8 @@ const SCORING = {
   MIDSEASON_GAMEWEEK: 19,
   MIDSEASON_WEIGHT: 0.4,
   FINAL_WEIGHT: 0.6,
-  EXTRA_TEAM_CORRECT_POINTS: 15 // top-scoring-team / clean-sheet-team guesses
+  EXTRA_TEAM_CORRECT_POINTS: 15, // top-scoring-team / clean-sheet-team guesses
+  EXTRA_GAME_CORRECT_POINTS: 20  // highest-scoring-game / lowest-scoring-game guesses
 };
 
 const API_BASE = 'https://api.football-data.org/v4';
@@ -33,21 +32,21 @@ const db = admin.firestore();
 
 async function apiFetch(path) {
   const res = await fetch(API_BASE + path, { headers: { 'X-Auth-Token': process.env.FOOTBALL_DATA_API_KEY } });
-  if (!res.ok) { console.error(`API error ${res.status} for ${path}: ${await res.text()}`); return null; }
+  if (!res.ok) {
+    console.error(`API fetch failed (${res.status}): ${path}`);
+    return null;
+  }
   return res.json();
 }
 
-// ---------- 1. Sync fixtures & results ----------
+// Helper: delays execution for `ms` milliseconds — used to respect free-tier rate limits
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ---------- 1. Sync fixtures & standings ----------
 async function syncFixtures() {
   const data = await apiFetch(`/competitions/${COMPETITION}/matches`);
-  if (!data || !data.matches) return;
-
-  // SAFETY GUARD: a real-world match can never "un-finish" — if this ever shows up in Firestore
-  // as already FINISHED, no later sync should be able to revert it to an earlier status, no
-  // matter what caused a bad read (a transient API glitch, an overlapping/racing run, anything).
-  // This query is bounded by how many matches have finished so far this season — much cheaper
-  // than reading the whole fixtures collection, and only grows gradually as the season goes on.
-  //
   // We also capture the canonical scores from these Firestore docs. This is critical: when the
   // API glitches and returns TIMED for a finished match, it also returns null scores. If we only
   // corrected the status (as before) but left the null scores in place, scoreFinishedMatches()
@@ -219,7 +218,7 @@ async function scoreFinishedMatches(fixturesInMemory) {
   return scoredCount;
 }
 
-// ---------- 3. Score gameweek extras (top scoring team / clean sheet team) ----------
+// ---------- 3. Score gameweek extras (top scoring team / clean sheet team / highest & lowest scoring games) ----------
 async function scoreGwExtras(allFixtures) {
   // Group finished fixtures by gameweek where the ENTIRE gameweek is finished
   const byGW = {};
@@ -243,6 +242,13 @@ async function scoreGwExtras(allFixtures) {
     const maxGoals = Math.max(...Object.values(teamGoals));
     const topScoringTeams = new Set(Object.entries(teamGoals).filter(([, g]) => g === maxGoals).map(([t]) => t));
 
+    // Highest and lowest scoring matches in the gameweek
+    const matchGoals = fx.map(f => (f.homeScore || 0) + (f.awayScore || 0));
+    const maxMatchGoals = Math.max(...matchGoals);
+    const minMatchGoals = Math.min(...matchGoals);
+    const highestScoringGameIds = new Set(fx.filter(f => (f.homeScore || 0) + (f.awayScore || 0) === maxMatchGoals).flatMap(f => [String(f.id), Number(f.id)]));
+    const lowestScoringGameIds = new Set(fx.filter(f => (f.homeScore || 0) + (f.awayScore || 0) === minMatchGoals).flatMap(f => [String(f.id), Number(f.id)]));
+
     const extrasSnap = await db.collection('gwExtraPredictions')
       .where('gameweek', '==', gw).where('scored', '==', false).get();
     if (extrasSnap.empty) continue;
@@ -252,6 +258,8 @@ async function scoreGwExtras(allFixtures) {
       let points = 0;
       if (topScoringTeams.has(e.topScoringTeam)) points += SCORING.EXTRA_TEAM_CORRECT_POINTS;
       if (cleanSheetTeams.has(e.cleanSheetTeam)) points += SCORING.EXTRA_TEAM_CORRECT_POINTS;
+      if (e.highestScoringGame && highestScoringGameIds.has(e.highestScoringGame)) points += SCORING.EXTRA_GAME_CORRECT_POINTS;
+      if (e.lowestScoringGame && lowestScoringGameIds.has(e.lowestScoringGame)) points += SCORING.EXTRA_GAME_CORRECT_POINTS;
       batch.update(d.ref, { points, scored: true });
     });
     await batch.commit();
@@ -271,7 +279,7 @@ async function updateLeaderboard(fixturesInMemory) {
   const fixtureGW = {};
   fixturesInMemory.forEach(f => { fixtureGW[f.id] = f.gameweek; });
 
-  const userPoints = {}, userGWHit = {}, userExtraPoints = {};
+  const userPoints = {}, userGWHit = {}, userExtraPoints = {}, userGWPoints = {};
   const userExactCount = {}, userScoredCount = {}, userOutcomeCount = {}, userTotalCount = {};
   predsSnap.forEach(d => {
     const p = d.data();
@@ -280,6 +288,13 @@ async function updateLeaderboard(fixturesInMemory) {
     const gw = fixtureGW[p.fixtureId];
     if (!userGWHit[p.uid]) userGWHit[p.uid] = {};
     if ((p.points || 0) > 0) userGWHit[p.uid][gw] = true;
+
+    // Per-GW points breakdown — only count scored predictions so the column
+    // shows the points actually awarded, not predictions still awaiting scoring.
+    if (p.scored && gw) {
+      if (!userGWPoints[p.uid]) userGWPoints[p.uid] = {};
+      userGWPoints[p.uid][gw] = (userGWPoints[p.uid][gw] || 0) + (p.points || 0);
+    }
 
     if (p.scored) {
       userScoredCount[p.uid] = (userScoredCount[p.uid] || 0) + 1;
@@ -329,7 +344,8 @@ async function updateLeaderboard(fixturesInMemory) {
       matchesPredicted: userTotalCount[d.id] || 0,
       correctPredictions: exactCount + outcomeCount,
       perfectPredictions: exactCount,
-      totalPoints: matchPts + tablePts + extraPts + streakBonus
+      totalPoints: matchPts + tablePts + extraPts + streakBonus,
+      gwPoints: userGWPoints[d.id] || {}
     });
   });
   rows.sort((a, b) => b.totalPoints - a.totalPoints);

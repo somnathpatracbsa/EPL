@@ -95,7 +95,7 @@ document.getElementById('tabs').addEventListener('click', (e) => {
 
   if (btn.dataset.tab === 'allTables') loadAllTables();
   if (btn.dataset.tab === 'community') loadCommunity();
-  if (btn.dataset.tab === 'highlights') loadHighlights();
+  if (btn.dataset.tab === 'leaderboard') { loadLeaderboard(); loadHighlights(); }
   if (btn.dataset.tab === 'awards') { loadAwardsCommunity(); loadAwardsScorersRef(); }
   if (btn.dataset.tab === 'profile') loadProfile();
   if (btn.dataset.tab === 'home') loadHome();
@@ -348,12 +348,13 @@ async function loadFixtures() {
     const existing = fixturePreds.find(p => p.uid === currentUser.uid) || null;
     const predRef = doc(db, 'predictions', `${currentUser.uid}_${fx.id}`);
 
+    const isLive = fx.status === 'IN_PLAY' || fx.status === 'PAUSED';
     const card = document.createElement('div');
-    card.className = 'fixture-card' + (locked ? ' locked' : '');
+    card.className = 'fixture-card' + (locked ? ' locked' : '') + (isLive ? ' fixture-live-card' : '');
     card.innerHTML = `
       <div class="fixture-main">
         <div>
-          <div class="fixture-teams"><span class="kit-dot" style="background:${kitColor(fx.homeTeam)}"></span>${fx.homeTeam} <span class="home-away-tag">(Home)</span> <span style="color:var(--chalk-dim); font-weight:400;">vs</span> ${fx.awayTeam} <span class="home-away-tag">(Away)</span> <span class="kit-dot" style="background:${kitColor(fx.awayTeam)}"></span></div>
+          <div class="fixture-teams"><span class="kit-dot home-dot"></span>${fx.homeTeam} <span class="home-away-tag">(Home)</span> <span style="color:var(--chalk-dim); font-weight:400;">vs</span> ${fx.awayTeam} <span class="home-away-tag">(Away)</span> <span class="kit-dot away-dot"></span></div>
           <div class="fixture-kickoff">${matchStatusLine(fx, locked)}</div>
         </div>
         <div class="score-input-group">
@@ -364,6 +365,7 @@ async function loadFixtures() {
           <span class="pred-status"></span>
         </div>
       </div>
+      ${isLive ? `<div class="live-score-bar"><span class="live-dot"></span><span class="live-score-num">${fx.homeScore ?? 0} – ${fx.awayScore ?? 0}</span><span class="live-sync-note">score as of last hourly sync</span></div>` : ''}
       <div class="crowd-pulse" data-fixture="${fx.id}">${fixturePreds.length ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">No predictions yet — be the first!</div>'}</div>
     `;
     if (!locked) {
@@ -404,6 +406,11 @@ document.getElementById('saveAllWithExtrasBtn').addEventListener('click', async 
     if (ok) count++;
   }
   const extrasSaved = await saveGwExtras();
+  if (extrasSaved) {
+    const fixtures = await getAllFixtures();
+    const gwFixtures = fixtures.filter(f => Number(f.gameweek) === Number(currentGW));
+    await refreshExtrasCrowdStats(gwFixtures);
+  }
   celebrate(`${count} prediction${count === 1 ? '' : 's'}${extrasSaved ? ' + extras' : ''} saved! 🎯`);
 });
 
@@ -518,7 +525,24 @@ async function setupGwExtras(fixtures) {
   const teams = [...new Set(fixtures.flatMap(f => [f.homeTeam, f.awayTeam]))].sort();
   const topSel = document.getElementById('topScoringTeam');
   const csSel = document.getElementById('cleanSheetTeam');
-  [topSel, csSel].forEach(sel => { sel.innerHTML = teams.map(t => `<option value="${t}">${t}</option>`).join(''); });
+  const highGameSel = document.getElementById('highestScoringGame');
+  const lowGameSel = document.getElementById('lowestScoringGame');
+
+  const defaultTeamOpt = '<option value="">-- Select Team --</option>';
+  const teamOptions = defaultTeamOpt + teams.map(t => `<option value="${t}">${t}</option>`).join('');
+  topSel.innerHTML = teamOptions;
+  csSel.innerHTML = teamOptions;
+
+  const defaultGameOpt = '<option value="">-- Select Match --</option>';
+  const fixtureOptions = defaultGameOpt + fixtures.map(f => `<option value="${f.id}">⚽ ${f.homeTeam} vs ${f.awayTeam}</option>`).join('');
+  highGameSel.innerHTML = fixtureOptions;
+  lowGameSel.innerHTML = fixtureOptions;
+
+  // Set default values as blank
+  topSel.value = '';
+  csSel.value = '';
+  highGameSel.value = '';
+  lowGameSel.value = '';
 
   // Locks the moment any match in this gameweek has kicked off — same cutoff logic used for
   // individual fixture cards, since the "highest scoring team" / "clean sheet" guesses stop
@@ -529,36 +553,124 @@ async function setupGwExtras(fixtures) {
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const d = snap.data();
-    topSel.value = d.topScoringTeam || teams[0];
-    csSel.value = d.cleanSheetTeam || teams[0];
+    if (d.topScoringTeam) topSel.value = d.topScoringTeam;
+    if (d.cleanSheetTeam) csSel.value = d.cleanSheetTeam;
+    if (d.highestScoringGame) highGameSel.value = d.highestScoringGame;
+    if (d.lowestScoringGame) lowGameSel.value = d.lowestScoringGame;
   }
   document.getElementById('gwExtras').style.display = 'block';
 
   const lockNote = document.getElementById('gwExtrasLockNote');
   const saveBtn = document.getElementById('saveExtrasBtn');
-  topSel.disabled = gwLocked;
-  csSel.disabled = gwLocked;
+  [topSel, csSel, highGameSel, lowGameSel].forEach(sel => { sel.disabled = gwLocked; });
   saveBtn.style.display = gwLocked ? 'none' : 'inline-block';
   lockNote.style.display = gwLocked ? 'block' : 'none';
   if (gwLocked) lockNote.textContent = '🔒 Locked — a match in this gameweek has already kicked off.';
 
   saveBtn.onclick = async () => {
-    await saveGwExtras();
-    celebrate('Extras locked in! 🎯');
+    const ok = await saveGwExtras();
+    if (ok) {
+      celebrate('Extras locked in! 🎯');
+      await refreshExtrasCrowdStats(fixtures);
+    }
   };
+
+  await refreshExtrasCrowdStats(fixtures);
+}
+
+async function refreshExtrasCrowdStats(fixtures) {
+  const crowdContainer = document.getElementById('gwExtrasCrowdStats');
+  if (!crowdContainer || !currentGW) return;
+  try {
+    const extrasSnap = await getDocs(query(collection(db, 'gwExtraPredictions'), where('gameweek', '==', currentGW)));
+    const extrasDocs = extrasSnap.docs.map(d => d.data());
+    renderExtrasCrowdPulse(crowdContainer, extrasDocs, fixtures);
+  } catch (err) {
+    console.error('Error loading extras crowd stats:', err);
+  }
+}
+
+function renderExtrasCrowdPulse(container, extrasDocs, fixtures) {
+  if (!extrasDocs.length) {
+    container.innerHTML = '<div class="crowd-locked-note" style="margin-top:14px;">No gameweek extra predictions yet — be the first!</div>';
+    return;
+  }
+
+  const fixtureMap = {};
+  fixtures.forEach(f => { fixtureMap[f.id] = `${f.homeTeam} vs ${f.awayTeam}`; });
+
+  const getTopPicks = (key, isMatch = false) => {
+    const counts = {};
+    let total = 0;
+    extrasDocs.forEach(d => {
+      const val = d[key];
+      if (val) {
+        counts[val] = (counts[val] || 0) + 1;
+        total++;
+      }
+    });
+    if (!total) return [];
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([id, count]) => {
+        const name = isMatch ? (fixtureMap[id] || id) : id;
+        const pct = Math.round((count / total) * 100);
+        return { name, count, pct };
+      });
+  };
+
+  const topScoring = getTopPicks('topScoringTeam');
+  const cleanSheet = getTopPicks('cleanSheetTeam');
+  const highestGame = getTopPicks('highestScoringGame', true);
+  const lowestGame = getTopPicks('lowestScoringGame', true);
+
+  const renderPickList = (picks) => {
+    if (!picks.length) return '<span class="extras-no-votes">No picks yet</span>';
+    return picks.map(p => `<span class="extra-crowd-chip"><strong>${p.name}</strong> ${p.pct}%</span>`).join(' ');
+  };
+
+  container.innerHTML = `
+    <div class="extras-crowd-box">
+      <div class="label">👥 Community Extra Picks (${extrasDocs.length} player${extrasDocs.length === 1 ? '' : 's'})</div>
+      <div class="extras-crowd-grid">
+        <div class="extras-crowd-item">
+          <span class="cat-title">🎯 Top Scoring Team</span>
+          <div class="cat-chips">${renderPickList(topScoring)}</div>
+        </div>
+        <div class="extras-crowd-item">
+          <span class="cat-title">🛡️ Clean Sheet</span>
+          <div class="cat-chips">${renderPickList(cleanSheet)}</div>
+        </div>
+        <div class="extras-crowd-item">
+          <span class="cat-title">🔥 Highest Scoring Game</span>
+          <div class="cat-chips">${renderPickList(highestGame)}</div>
+        </div>
+        <div class="extras-crowd-item">
+          <span class="cat-title">🔒 Lowest Scoring Game</span>
+          <div class="cat-chips">${renderPickList(lowestGame)}</div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 async function saveGwExtras() {
   const topSel = document.getElementById('topScoringTeam');
   const csSel = document.getElementById('cleanSheetTeam');
-  if (topSel.disabled || csSel.disabled) return false; // locked — a match has already kicked off
-  if (!topSel.value || !csSel.value) return false;
+  const highGameSel = document.getElementById('highestScoringGame');
+  const lowGameSel = document.getElementById('lowestScoringGame');
+  if (topSel.disabled || csSel.disabled || highGameSel.disabled || lowGameSel.disabled) return false; // locked — a match has already kicked off
+  if (!topSel.value && !csSel.value && !highGameSel.value && !lowGameSel.value) return false;
   const ref = doc(db, 'gwExtraPredictions', `${currentUser.uid}_${currentGW}`);
   await setDoc(ref, {
     uid: currentUser.uid, gameweek: currentGW,
-    topScoringTeam: topSel.value, cleanSheetTeam: csSel.value,
+    topScoringTeam: topSel.value || null,
+    cleanSheetTeam: csSel.value || null,
+    highestScoringGame: highGameSel.value || null,
+    lowestScoringGame: lowGameSel.value || null,
     scored: false, points: 0, submittedAt: serverTimestamp()
-  });
+  }, { merge: true });
   document.getElementById('extrasStatus').textContent = 'Saved ✓';
   return true;
 }
@@ -618,9 +730,8 @@ function renderTableList(teams, locked) {
     const actualZone = actualRank ? positionZoneClass(actualRank, teams.length) : '';
     li.innerHTML = `
       <span class="pos"></span>
-      <span class="kit-dot" style="background:${kitColor(team)}"></span>
-      <span style="flex:1;">${team}</span>
-      ${actualRank ? `<span class="actual-standing ${actualZone}" title="Current real standing">#${actualRank}</span>` : ''}
+      <span class="team-name" style="flex:1;">${team}</span>
+      ${actualRank ? `<span class="actual-standing ${actualZone}" title="Current live EPL table standing"><span class="actual-label">Current:</span> #${actualRank}</span>` : ''}
       ${locked ? '' : `
       <div class="reorder-controls" style="display: flex; align-items: center; gap: 6px;">
         <input type="number" class="rank-input" min="1" max="${teams.length}" aria-label="Set rank for ${team}" style="width: 45px; text-align: center;">
@@ -651,6 +762,29 @@ function renumberTableList() {
     li.classList.remove('zone-top4', 'zone-mid', 'zone-bottom3');
     const zone = positionZoneClass(currentRank, total);
     if (zone) li.classList.add(zone);
+
+    const actualRank = getActualRank(li.dataset.team);
+    let accEl = li.querySelector('.table-pred-accuracy');
+    if (!accEl) {
+      accEl = document.createElement('span');
+      accEl.className = 'table-pred-accuracy';
+      const teamNameEl = li.querySelector('.team-name');
+      if (teamNameEl) teamNameEl.after(accEl);
+    }
+    if (actualRank != null) {
+      const diff = Math.abs(currentRank - actualRank);
+      if (diff === 0) {
+        accEl.innerHTML = `<span class="matrix-tick-icon" title="Exact match! (Rank #${actualRank})">✓</span>`;
+      } else if (diff === 1) {
+        accEl.innerHTML = `<span class="matrix-dot dot-diff-1" title="Off by 1 (Predicted #${currentRank}, Actual #${actualRank})"></span>`;
+      } else if (diff === 2) {
+        accEl.innerHTML = `<span class="matrix-dot dot-diff-2" title="Off by 2 (Predicted #${currentRank}, Actual #${actualRank})"></span>`;
+      } else {
+        accEl.innerHTML = '';
+      }
+    } else {
+      accEl.innerHTML = '';
+    }
 
     const rankInput = li.querySelector('.rank-input');
     if (rankInput && document.activeElement !== rankInput) {
@@ -801,7 +935,24 @@ async function loadAllTables() {
       return;
     }
 
-    playerEntries.sort((a, b) => a.name.localeCompare(b.name));
+    let matrixPlayerOrder = null;
+    try {
+      const saved = sessionStorage.getItem('matrix_player_order');
+      if (saved) matrixPlayerOrder = JSON.parse(saved);
+    } catch (e) {}
+
+    if (Array.isArray(matrixPlayerOrder) && matrixPlayerOrder.length) {
+      const orderMap = {};
+      matrixPlayerOrder.forEach((uid, idx) => { orderMap[uid] = idx; });
+      playerEntries.sort((a, b) => {
+        const idxA = orderMap[a.uid] ?? 9999;
+        const idxB = orderMap[b.uid] ?? 9999;
+        if (idxA !== idxB) return idxA - idxB;
+        return a.name.localeCompare(b.name);
+      });
+    } else {
+      playerEntries.sort((a, b) => a.name.localeCompare(b.name));
+    }
 
     // cfg.standingsOrder comes straight from automation/sync-and-score.js's syncStandingsOrder(),
     // which writes it to config/current on every hourly run — this is the real current league order.
@@ -822,15 +973,7 @@ async function loadAllTables() {
     const fallbackNotice = usingFallback
       ? `<p class="empty-state" style="margin-bottom:10px;">⚠️ Live standings haven't synced to this site yet (showing alphabetical order for now) — check that the automation workflow has run recently and that <code>config/current</code> has a <code>standingsOrder</code> field in Firestore.</p>`
       : '';
-    const scrollHint = playerEntries.length > 5
-      ? `<p class="empty-state" style="margin-bottom:8px;">↔️ ${playerEntries.length} players — scroll sideways to compare everyone. Your column is highlighted in amber, and the header row/team column stay pinned as you scroll.</p>`
-      : '';
 
-    const header = `<tr><th>Team</th><th>GD</th><th>W</th><th>D</th><th>L</th><th>Form</th>${playerEntries.map(p => `<th class="${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}">${avatarHTML(p.uid, users, '20px')} ${p.name}</th>`).join('')}</tr>`;
-
-    // Stats keyed by the API's exact team name — build a normalized lookup so it matches
-    // regardless of small spelling differences against our own team-name strings (same
-    // normalizeTeamName approach used for standings order, for the same reason).
     const rawStats = cfg.standingsStats || {};
     const normalizedStats = {};
     Object.entries(rawStats).forEach(([k, v]) => { normalizedStats[normalizeTeamName(k)] = v; });
@@ -840,37 +983,153 @@ async function loadAllTables() {
       return `<span class="form-chips">${formStr.split(',').map(r => `<span class="form-chip ${r.trim()}">${r.trim()}</span>`).join('')}</span>`;
     };
 
-    const rows = teamRows.map((teamName, idx) => {
-      const actualPos = idx + 1;
-      const actualZone = positionZoneClass(actualPos, totalTeams);
-      const s = getStatsFor(teamName);
-      return `
-      <tr>
-        <td>
-          <span class="kit-dot" style="background:${typeof kitColor === 'function' ? kitColor(teamName) : '#ccc'}; margin-right:6px;"></span>${teamName}
-          <span class="actual-standing ${actualZone}">#${actualPos}</span>
-        </td>
-        <td class="stat-col">${s && s.goalDifference != null ? (s.goalDifference > 0 ? '+' : '') + s.goalDifference : '–'}</td>
-        <td class="stat-col">${s?.won ?? '–'}</td>
-        <td class="stat-col">${s?.draw ?? '–'}</td>
-        <td class="stat-col">${s?.lost ?? '–'}</td>
-        <td class="stat-col">${s ? formChips(s.form) : '–'}</td>
-        ${playerEntries.map(p => {
-          const predPos = p.positions[teamName];
-          const zone = positionZoneClass(predPos, totalTeams);
-          const isMine = currentUser && p.uid === currentUser.uid;
-          return `<td class="pos-num ${zone}" style="${isMine ? 'background:rgba(255,182,39,0.08);' : ''}">${predPos ?? '–'}</td>`;
-        }).join('')}
-      </tr>
-    `;
-    }).join('');
+    function renderMatrix() {
+      const scrollHint = `
+        <div class="matrix-controls-bar">
+          <span class="matrix-hint-text">↔️ ${playerEntries.length} players — <strong>drag any player column header</strong> to compare side by side. Your column is highlighted in amber.</span>
+          <div class="matrix-btn-group">
+            ${currentUser ? `<button id="pinMyColBtn" class="btn btn-secondary" style="font-size:11px; padding:4px 8px;">📌 Move Me First</button>` : ''}
+            <button id="resetColOrderBtn" class="btn btn-secondary" style="font-size:11px; padding:4px 8px;">Reset Order</button>
+          </div>
+        </div>
+      `;
 
-    grid.innerHTML = `${fallbackNotice}${scrollHint}<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
+      const header = `<tr>
+        <th>Team</th><th>Pts</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Form</th>
+        ${playerEntries.map(p => `
+          <th class="player-col-th ${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}" draggable="true" data-uid="${p.uid}" title="Drag header to move column">
+            <div class="player-th-content">
+              ${avatarHTML(p.uid, users, '20px')}
+              <span class="player-col-name">${p.name}</span>
+              <span class="col-drag-handle" title="Drag to reorder">⋮⋮</span>
+            </div>
+          </th>
+        `).join('')}
+      </tr>`;
+
+      const rows = teamRows.map((teamName, idx) => {
+        const actualPos = idx + 1;
+        const actualZone = positionZoneClass(actualPos, totalTeams);
+        const s = getStatsFor(teamName);
+        return `
+        <tr>
+          <td>
+            <span class="team-name ${actualZone}">${teamName}</span>
+            <span class="actual-standing ${actualZone}">#${actualPos}</span>
+          </td>
+          <td class="stat-col" style="font-weight:700; color:var(--chalk);">${s?.points ?? '–'}</td>
+          <td class="stat-col">${s?.won ?? '–'}</td>
+          <td class="stat-col">${s?.draw ?? '–'}</td>
+          <td class="stat-col">${s?.lost ?? '–'}</td>
+          <td class="stat-col">${s && s.goalDifference != null ? (s.goalDifference > 0 ? '+' : '') + s.goalDifference : '–'}</td>
+          <td class="stat-col">${s ? formChips(s.form) : '–'}</td>
+          ${playerEntries.map(p => {
+            const predPos = p.positions[teamName];
+            const zone = positionZoneClass(predPos, totalTeams);
+            const isMine = currentUser && p.uid === currentUser.uid;
+            let indicator = '';
+            if (predPos != null && !usingFallback) {
+              const diff = Math.abs(predPos - actualPos);
+              if (diff === 0) {
+                indicator = '<span class="matrix-tick-icon" title="Exact match! (Rank #' + actualPos + ')">✓</span>';
+              } else if (diff === 1) {
+                indicator = '<span class="matrix-dot dot-diff-1" title="Off by 1 (Predicted #' + predPos + ', Actual #' + actualPos + ')"></span>';
+              } else if (diff === 2) {
+                indicator = '<span class="matrix-dot dot-diff-2" title="Off by 2 (Predicted #' + predPos + ', Actual #' + actualPos + ')"></span>';
+              }
+            }
+            return `<td class="pos-num ${zone}" style="${isMine ? 'background:rgba(255,182,39,0.08);' : ''}">${predPos ?? '–'}${indicator}</td>`;
+          }).join('')}
+        </tr>
+      `;
+      }).join('');
+
+      grid.innerHTML = `${fallbackNotice}${scrollHint}<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
+
+      // Helper action buttons
+      const pinBtn = document.getElementById('pinMyColBtn');
+      if (pinBtn) {
+        pinBtn.onclick = () => {
+          const myIdx = playerEntries.findIndex(p => p.uid === currentUser.uid);
+          if (myIdx > 0) {
+            const [me] = playerEntries.splice(myIdx, 1);
+            playerEntries.unshift(me);
+            savePlayerOrder();
+            renderMatrix();
+          }
+        };
+      }
+
+      const resetBtn = document.getElementById('resetColOrderBtn');
+      if (resetBtn) {
+        resetBtn.onclick = () => {
+          playerEntries.sort((a, b) => a.name.localeCompare(b.name));
+          try { sessionStorage.removeItem('matrix_player_order'); } catch (e) {}
+          renderMatrix();
+        };
+      }
+
+      enableMatrixColumnDrag(grid.querySelector('.matrix-table'), playerEntries, renderMatrix, savePlayerOrder);
+    }
+
+    function savePlayerOrder() {
+      try {
+        sessionStorage.setItem('matrix_player_order', JSON.stringify(playerEntries.map(p => p.uid)));
+      } catch (e) {}
+    }
+
+    renderMatrix();
 
   } catch (err) {
     console.error('loadAllTables Error:', err);
     grid.innerHTML = `<p class="empty-state">Failed to load community predictions. (${err.message})</p>`;
   }
+}
+
+function enableMatrixColumnDrag(tableEl, playerEntries, renderMatrix, savePlayerOrder) {
+  if (!tableEl) return;
+  let draggedUid = null;
+  const ths = tableEl.querySelectorAll('th.player-col-th');
+  ths.forEach(th => {
+    th.addEventListener('dragstart', (e) => {
+      draggedUid = th.dataset.uid;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedUid);
+      th.classList.add('dragging-col');
+    });
+
+    th.addEventListener('dragend', () => {
+      th.classList.remove('dragging-col');
+      ths.forEach(t => t.classList.remove('drag-over-col'));
+    });
+
+    th.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      th.classList.add('drag-over-col');
+    });
+
+    th.addEventListener('dragleave', () => {
+      th.classList.remove('drag-over-col');
+    });
+
+    th.addEventListener('drop', (e) => {
+      e.preventDefault();
+      th.classList.remove('drag-over-col');
+      const targetUid = th.dataset.uid;
+      if (!draggedUid || draggedUid === targetUid) return;
+
+      const fromIdx = playerEntries.findIndex(p => p.uid === draggedUid);
+      const toIdx = playerEntries.findIndex(p => p.uid === targetUid);
+      if (fromIdx === -1 || toIdx === -1) return;
+
+      const [moved] = playerEntries.splice(fromIdx, 1);
+      playerEntries.splice(toIdx, 0, moved);
+
+      savePlayerOrder();
+      renderMatrix();
+    });
+  });
 }
 
 
@@ -897,28 +1156,117 @@ async function fetchPredictionsForFixtureIds(fixtureIds) {
 
 async function loadCommunity(showAll = false) {
   const grid = document.getElementById('communityGrid');
+  const podiumEl = document.getElementById('seasonPodium');
   grid.innerHTML = '<p class="empty-state">Loading…</p>';
+  if (podiumEl) podiumEl.innerHTML = '';
 
-  const [fixtures, users, cfg] = await Promise.all([getAllFixtures(), getUsersMap(), loadConfig()]);
+  const [fixtures, users, cfg, lbSnap] = await Promise.all([
+    getAllFixtures(),
+    getUsersMap(),
+    loadConfig(),
+    getDocs(query(collection(db, 'leaderboard'), orderBy('rank', 'asc')))
+  ]);
   if (!fixtures.length) { grid.innerHTML = '<p class="empty-state">No fixtures synced yet.</p>'; return; }
+
+  // Render Overall Season Podium (Top 3)
+  if (podiumEl && !lbSnap.empty) {
+    const lbRows = lbSnap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(r => (r.totalPoints || 0) > 0);
+    if (lbRows.length > 0) {
+      const top1 = lbRows[0];
+      const top2 = lbRows[1];
+      const top3 = lbRows[2];
+
+      const renderPodiumCard = (p, rankNum, tagText, tagClass, animWrap, ptsClass) => {
+        if (!p) return '';
+        const name = p.displayName || users[p.uid]?.displayName || p.email || 'Player';
+        const predicted = p.matchesPredicted ?? p.predictedCount ?? 0;
+        const correct = p.correctPredictions ?? p.correctCount ?? 0;
+        const perfect = p.perfectPredictions ?? p.exactCount ?? 0;
+        const accuracy = p.accuracyPct ?? (predicted > 0 ? Math.round((correct / predicted) * 100) : 0);
+        return `
+          <div class="podium-card podium-rank-${rankNum}">
+            <div class="star-badge-header">
+              <div class="star-left-group">
+                ${animWrap}
+                <div class="star-title-wrap">
+                  <div class="star-tag ${tagClass}">${tagText}</div>
+                  <div class="star-player-name">${avatarHTML(p.uid, users, '26px')} <span>${name}</span></div>
+                </div>
+              </div>
+              <div class="${ptsClass}">
+                <span class="star-pts-num">${p.totalPoints || 0}</span>
+                <span class="star-pts-lbl">TOTAL PTS</span>
+              </div>
+            </div>
+            <div class="star-stats-grid">
+              <div class="star-stat"><span class="lbl">Predicted</span><span class="val">${predicted}</span></div>
+              <div class="star-stat"><span class="lbl">Correct</span><span class="val">${correct}</span></div>
+              <div class="star-stat"><span class="lbl">Accuracy</span><span class="val">${accuracy}%</span></div>
+              <div class="star-stat"><span class="lbl">Perfect</span><span class="val">${perfect} 🎯</span></div>
+            </div>
+          </div>
+        `;
+      };
+
+      const starAnim = `
+        <div class="star-anim-wrap" title="Star Predictor">
+          <span class="flying-ball">⚽</span>
+          <span class="kicking-player">🏃‍♂️</span>
+          <span class="star-trophy">🌟</span>
+        </div>
+      `;
+      const challengerAnim = `
+        <div class="challenger-anim-wrap" title="Challenger">
+          <span class="fist-bump">👊</span>
+          <span class="challenger-medal">🥈</span>
+        </div>
+      `;
+      const bronzeAnim = `
+        <div class="bronze-anim-wrap" title="In-The-Run">
+          <span class="walking-player">🚶</span>
+          <span class="bronze-medal">🥉</span>
+        </div>
+      `;
+
+      podiumEl.innerHTML = `
+        <div class="podium-section-wrap">
+          <div class="podium-header-bar">
+            <span class="podium-title">🏆 Overall Season Leaderboard & Podium</span>
+            <span class="podium-sub">Ranked by total points across all gameweeks</span>
+          </div>
+          <div class="podium-cards-grid">
+            ${renderPodiumCard(top1, 1, '👑 Star Predictor · 1st', 'gold-tag', starAnim, 'star-total-pts')}
+            ${renderPodiumCard(top2, 2, '🥈 Challenger · 2nd', 'silver-tag', challengerAnim, 'challenger-total-pts')}
+            ${renderPodiumCard(top3, 3, '🥉 In-The-Run · 3rd', 'bronze-tag', bronzeAnim, 'bronze-total-pts')}
+          </div>
+        </div>
+      `;
+    }
+  }
 
   const byGW = {};
   fixtures.forEach(f => { (byGW[f.gameweek] = byGW[f.gameweek] || []).push(f); });
 
-  // Use the same "current gameweek" the rest of the site uses (config.currentGameweek, set by
-  // the automation script) rather than deriving a separate one here from which matches have
-  // actually kicked off — that mismatch was why this tab lagged a gameweek behind Predict
-  // Gameweek: the config value advances as soon as the previous gameweek fully finishes, even
-  // before the next one has started.
   const currentGWNum = cfg.currentGameweek || Math.min(...fixtures.map(f => Number(f.gameweek)));
-
   const allGwNumbers = Object.keys(byGW).map(Number).filter(gw => gw <= currentGWNum).sort((a, b) => b - a);
   const gwNumbers = showAll ? allGwNumbers : allGwNumbers.slice(0, RECENT_GW_WINDOW);
 
   const visibleFixtureIds = gwNumbers.flatMap(gw => byGW[gw].map(f => f.id));
-  const preds = await fetchPredictionsForFixtureIds(visibleFixtureIds);
+  const [preds, extrasSnap] = await Promise.all([
+    fetchPredictionsForFixtureIds(visibleFixtureIds),
+    getDocs(collection(db, 'gwExtraPredictions'))
+  ]);
+
   const predsByFixture = {};
   preds.forEach(p => { (predsByFixture[p.fixtureId] = predsByFixture[p.fixtureId] || []).push(p); });
+
+  const extrasByGW = {};
+  extrasSnap.forEach(d => {
+    const e = d.data();
+    if (e && e.gameweek) {
+      (extrasByGW[e.gameweek] = extrasByGW[e.gameweek] || []).push(e);
+    }
+  });
 
   grid.innerHTML = '';
 
@@ -942,9 +1290,227 @@ async function loadCommunity(showAll = false) {
     details.appendChild(summary);
 
     const gwFixtures = byGW[gw].sort((a, b) => new Date(a.kickoffUTC) - new Date(b.kickoffUTC));
+
+    // Calculate per-player stats for this gameweek (matches + extras)
+    const userGwStats = {};
+    gwFixtures.forEach(fx => {
+      const fixturePreds = predsByFixture[fx.id] || [];
+      fixturePreds.forEach(p => {
+        if (!userGwStats[p.uid]) {
+          userGwStats[p.uid] = {
+            uid: p.uid,
+            name: users[p.uid]?.displayName || 'Player',
+            totalPoints: 0,
+            predicted: 0,
+            correct: 0,
+            perfect: 0,
+            scoredCount: 0
+          };
+        }
+        const st = userGwStats[p.uid];
+        st.predicted++;
+        if (p.scored) {
+          st.scoredCount++;
+          st.totalPoints += (p.points || 0);
+          if (p.points === 25) {
+            st.perfect++;
+            st.correct++;
+          } else if (p.points === 10) {
+            st.correct++;
+          }
+        }
+      });
+    });
+
+    const gwExtras = extrasByGW[gw] || [];
+    gwExtras.forEach(e => {
+      if (e.scored && e.points) {
+        if (!userGwStats[e.uid]) {
+          userGwStats[e.uid] = {
+            uid: e.uid,
+            name: users[e.uid]?.displayName || 'Player',
+            totalPoints: 0,
+            predicted: 0,
+            correct: 0,
+            perfect: 0,
+            scoredCount: 0
+          };
+        }
+        userGwStats[e.uid].totalPoints += (e.points || 0);
+      }
+    });
+
+    Object.values(userGwStats).forEach(st => {
+      st.accuracy = st.scoredCount > 0 ? Math.round((st.correct / st.scoredCount) * 100) : 0;
+    });
+
+    const starPlayers = Object.values(userGwStats).filter(st => st.totalPoints > 0)
+      .sort((a, b) => b.totalPoints - a.totalPoints || b.perfect - a.perfect || b.correct - a.correct);
+    const star = starPlayers[0] || null;
+    const challenger = starPlayers[1] || null;
+
+    if (star) {
+      const performersGrid = document.createElement('div');
+      performersGrid.className = 'gw-performers-grid';
+
+      const starCardHTML = `
+        <div class="gw-star-card">
+          <div class="star-badge-header">
+            <div class="star-left-group">
+              <div class="star-anim-wrap" title="Star of the Gameweek">
+                <span class="flying-ball">⚽</span>
+                <span class="kicking-player">🏃‍♂️</span>
+                <span class="star-trophy">🌟</span>
+              </div>
+              <div class="star-title-wrap">
+                <div class="star-tag">⭐ Star of Gameweek ${gw}</div>
+                <div class="star-player-name">${avatarHTML(star.uid, users, '26px')} <span>${star.name}</span></div>
+              </div>
+            </div>
+            <div class="star-total-pts">
+              <span class="star-pts-num">${star.totalPoints}</span>
+              <span class="star-pts-lbl">GW PTS</span>
+            </div>
+          </div>
+          <div class="star-stats-grid">
+            <div class="star-stat"><span class="lbl">Predicted</span><span class="val">${star.predicted}</span></div>
+            <div class="star-stat"><span class="lbl">Correct</span><span class="val">${star.correct}</span></div>
+            <div class="star-stat"><span class="lbl">Accuracy</span><span class="val">${star.accuracy}%</span></div>
+            <div class="star-stat"><span class="lbl">Perfect</span><span class="val">${star.perfect} 🎯</span></div>
+          </div>
+        </div>
+      `;
+
+      let challengerCardHTML = '';
+      if (challenger) {
+        challengerCardHTML = `
+          <div class="gw-challenger-card">
+            <div class="star-badge-header">
+              <div class="star-left-group">
+                <div class="challenger-anim-wrap" title="Challenger of the Gameweek">
+                  <span class="fist-bump">👊</span>
+                  <span class="challenger-medal">🥈</span>
+                </div>
+                <div class="star-title-wrap">
+                  <div class="challenger-tag">🥈 Challenger of Gameweek ${gw}</div>
+                  <div class="star-player-name">${avatarHTML(challenger.uid, users, '26px')} <span>${challenger.name}</span></div>
+                </div>
+              </div>
+              <div class="challenger-total-pts">
+                <span class="star-pts-num">${challenger.totalPoints}</span>
+                <span class="star-pts-lbl">GW PTS</span>
+              </div>
+            </div>
+            <div class="star-stats-grid">
+              <div class="star-stat"><span class="lbl">Predicted</span><span class="val">${challenger.predicted}</span></div>
+              <div class="star-stat"><span class="lbl">Correct</span><span class="val">${challenger.correct}</span></div>
+              <div class="star-stat"><span class="lbl">Accuracy</span><span class="val">${challenger.accuracy}%</span></div>
+              <div class="star-stat"><span class="lbl">Perfect</span><span class="val">${challenger.perfect} 🎯</span></div>
+            </div>
+          </div>
+        `;
+      }
+
+      performersGrid.innerHTML = starCardHTML + challengerCardHTML;
+      details.appendChild(performersGrid);
+    }
+
+    // Compute Extras Actuals for this gameweek if any matches have finished
+    const finishedGwFixtures = gwFixtures.filter(f => f.status === 'FINISHED' && f.homeScore !== null && f.awayScore !== null);
+    if (finishedGwFixtures.length > 0) {
+      const totalExtrasCount = gwExtras.length;
+
+      // 1. Highest scoring team(s)
+      const teamGoals = {};
+      finishedGwFixtures.forEach(f => {
+        teamGoals[f.homeTeam] = (teamGoals[f.homeTeam] || 0) + (f.homeScore || 0);
+        teamGoals[f.awayTeam] = (teamGoals[f.awayTeam] || 0) + (f.awayScore || 0);
+      });
+      const maxGoals = Math.max(...Object.values(teamGoals));
+      const topScoringTeams = Object.entries(teamGoals).filter(([, g]) => g === maxGoals).map(([t]) => t);
+      const topTeamCorrect = gwExtras.filter(e => topScoringTeams.includes(e.topScoringTeam)).length;
+      const topTeamPct = totalExtrasCount > 0 ? Math.round((topTeamCorrect / totalExtrasCount) * 100) : 0;
+      const topTeamStr = `${topScoringTeams.join(', ')} (${maxGoals} goal${maxGoals === 1 ? '' : 's'})`;
+      const topTeamHitPlayers = gwExtras.filter(e => topScoringTeams.includes(e.topScoringTeam)).map(e => users[e.uid]?.displayName || users[e.uid]?.email || 'Player');
+
+      // 2. Clean sheet team(s)
+      const cleanSheetTeams = [];
+      finishedGwFixtures.forEach(f => {
+        if (f.awayScore === 0) cleanSheetTeams.push(f.homeTeam);
+        if (f.homeScore === 0) cleanSheetTeams.push(f.awayTeam);
+      });
+      const cleanSheetSet = new Set(cleanSheetTeams);
+      const csCorrect = gwExtras.filter(e => cleanSheetSet.has(e.cleanSheetTeam)).length;
+      const csPct = totalExtrasCount > 0 ? Math.round((csCorrect / totalExtrasCount) * 100) : 0;
+      const csStr = cleanSheetTeams.length ? cleanSheetTeams.join(', ') : 'None';
+      const csHitPlayers = gwExtras.filter(e => cleanSheetSet.has(e.cleanSheetTeam)).map(e => users[e.uid]?.displayName || users[e.uid]?.email || 'Player');
+
+      // 3. Highest scoring game(s)
+      const matchGoals = finishedGwFixtures.map(f => ({ fx: f, total: (f.homeScore || 0) + (f.awayScore || 0) }));
+      const maxMatchGoals = Math.max(...matchGoals.map(m => m.total));
+      const topMatches = matchGoals.filter(m => m.total === maxMatchGoals);
+      const topMatchIds = new Set(topMatches.flatMap(m => [String(m.fx.id), Number(m.fx.id)]));
+      const highGameCorrect = gwExtras.filter(e => e.highestScoringGame && topMatchIds.has(e.highestScoringGame)).length;
+      const highGamePct = totalExtrasCount > 0 ? Math.round((highGameCorrect / totalExtrasCount) * 100) : 0;
+      const highGameStr = topMatches.map(m => `${m.fx.homeTeam} ${m.fx.homeScore}–${m.fx.awayScore} ${m.fx.awayTeam} (${m.total}g)`).join(' · ');
+      const highGameHitPlayers = gwExtras.filter(e => e.highestScoringGame && topMatchIds.has(e.highestScoringGame)).map(e => users[e.uid]?.displayName || users[e.uid]?.email || 'Player');
+
+      // 4. Lowest scoring game(s)
+      const minMatchGoals = Math.min(...matchGoals.map(m => m.total));
+      const lowMatches = matchGoals.filter(m => m.total === minMatchGoals);
+      const lowMatchIds = new Set(lowMatches.flatMap(m => [String(m.fx.id), Number(m.fx.id)]));
+      const lowGameCorrect = gwExtras.filter(e => e.lowestScoringGame && lowMatchIds.has(e.lowestScoringGame)).length;
+      const lowGamePct = totalExtrasCount > 0 ? Math.round((lowGameCorrect / totalExtrasCount) * 100) : 0;
+      const lowGameStr = lowMatches.map(m => `${m.fx.homeTeam} ${m.fx.homeScore}–${m.fx.awayScore} ${m.fx.awayTeam} (${m.total}g)`).join(' · ');
+      const lowGameHitPlayers = gwExtras.filter(e => e.lowestScoringGame && lowMatchIds.has(e.lowestScoringGame)).map(e => users[e.uid]?.displayName || users[e.uid]?.email || 'Player');
+
+      const formatHitPlayers = (names) => {
+        if (!names.length) return '<div class="item-hit-players none">No players predicted this</div>';
+        return `<div class="item-hit-players">🎯 <strong>Hit by (${names.length}):</strong> ${names.join(', ')}</div>`;
+      };
+
+      const extrasCard = document.createElement('div');
+      extrasCard.className = 'gw-extras-actual-card';
+      extrasCard.innerHTML = `
+        <div class="gw-extras-actual-title">⚡ Gameweek ${gw} Extras — Actual Results</div>
+        <div class="extras-rows">
+          <div class="extras-row">
+            <div class="gw-extras-actual-item">
+              <span class="item-lbl">🎯 Top Scoring Team</span>
+              <span class="item-val">${topTeamStr}</span>
+              <span class="item-pct">predicted by ${topTeamPct}% (${topTeamCorrect}/${totalExtrasCount})</span>
+              ${formatHitPlayers(topTeamHitPlayers)}
+            </div>
+            <div class="gw-extras-actual-item">
+              <span class="item-lbl">🛡️ Clean Sheet</span>
+              <span class="item-val">${csStr}</span>
+              <span class="item-pct">${cleanSheetTeams.length ? `predicted by ${csPct}% (${csCorrect}/${totalExtrasCount})` : '–'}</span>
+              ${formatHitPlayers(csHitPlayers)}
+            </div>
+          </div>
+          <div class="extras-row">
+            <div class="gw-extras-actual-item">
+              <span class="item-lbl">🔥 Highest Scoring Game</span>
+              <span class="item-val">${highGameStr}</span>
+              <span class="item-pct">predicted by ${highGamePct}% (${highGameCorrect}/${totalExtrasCount})</span>
+              ${formatHitPlayers(highGameHitPlayers)}
+            </div>
+            <div class="gw-extras-actual-item">
+              <span class="item-lbl">🔒 Lowest Scoring Game</span>
+              <span class="item-val">${lowGameStr}</span>
+              <span class="item-pct">predicted by ${lowGamePct}% (${lowGameCorrect}/${totalExtrasCount})</span>
+              ${formatHitPlayers(lowGameHitPlayers)}
+            </div>
+          </div>
+        </div>
+      `;
+      details.appendChild(extrasCard);
+    }
+
     gwFixtures.forEach(fx => {
       const fixturePreds = predsByFixture[fx.id] || [];
       const isFinished = fx.status === 'FINISHED';
+      const isLive = fx.status === 'IN_PLAY' || fx.status === 'PAUSED';
       const actual = isFinished ? outcomeInfo(fx.homeScore, fx.awayScore, fx.homeTeam, fx.awayTeam) : null;
 
       const rows = fixturePreds.map(p => {
@@ -969,10 +1535,18 @@ async function loadCommunity(showAll = false) {
         </tr>`;
       }).join('');
 
+      // Build the score/status line shown next to the match title
+      const scoreDisplay = isFinished
+        ? `<span class="comm-ft">FT: ${fx.homeScore}–${fx.awayScore}</span>`
+        : isLive
+        ? `<span class="comm-live"><span class="live-dot"></span>${fx.homeScore ?? 0}–${fx.awayScore ?? 0}</span>`
+        : '';
+
       const card = document.createElement('div');
-      card.className = 'community-fixture';
+      card.className = 'community-fixture' + (isLive ? ' fixture-live-card' : '');
       card.innerHTML = `
-        <h3>${fx.homeTeam} vs ${fx.awayTeam} ${isFinished ? `<span style="color:var(--chalk-dim); font-weight:400;">— FT ${fx.homeScore}–${fx.awayScore}</span>` : ''}</h3>
+        <h3>${fx.homeTeam} vs ${fx.awayTeam} ${scoreDisplay ? `<span class="comm-score-wrap">${scoreDisplay}</span>` : ''}</h3>
+        ${isLive ? `<div class="live-score-bar" style="margin:-4px 0 12px;"><span class="live-dot"></span><span class="live-score-num">${fx.homeScore ?? 0} – ${fx.awayScore ?? 0}</span><span class="live-sync-note">score as of last hourly sync</span></div>` : ''}
         <div class="crowd-pulse">${fixturePreds.length ? crowdPulseHTML(computeCrowdStats(fixturePreds, fx), fx) : '<div class="crowd-locked-note">No predictions yet</div>'}</div>
         <table>${rows || '<tr><td colspan="4" class="empty-state">No predictions</td></tr>'}</table>
       `;
@@ -986,28 +1560,148 @@ async function loadCommunity(showAll = false) {
 
 // ---------- Leaderboard tab ----------
 async function loadLeaderboard() {
-  const q = query(collection(db, 'leaderboard'), orderBy('rank', 'asc'));
-  const snap = await getDocs(q);
+  const head = document.getElementById('leaderboardHead');
   const body = document.getElementById('leaderboardBody');
-  body.innerHTML = '';
+  body.innerHTML = '<tr><td colspan="12" class="empty-state">Loading leaderboard…</td></tr>';
+
+  const [snap, fixtures, allPredsSnap, extrasSnap] = await Promise.all([
+    getDocs(query(collection(db, 'leaderboard'), orderBy('rank', 'asc'))),
+    getAllFixtures(),
+    getDocs(collection(db, 'predictions')),
+    getDocs(collection(db, 'gwExtraPredictions'))
+  ]);
+
   const rows = [];
   snap.forEach(d => rows.push({ uid: d.id, ...d.data() }));
   const totalPlayers = rows.length;
 
+  const fixtureGW = {};
+  fixtures.forEach(f => { fixtureGW[f.id] = Number(f.gameweek); });
+
+  // Dynamically compute/ensure gwPoints for all players across all scored predictions
+  const computedGwPoints = {};
+  allPredsSnap.forEach(d => {
+    const p = d.data();
+    if (p.scored && p.fixtureId && fixtureGW[p.fixtureId] && (p.points || 0) > 0) {
+      const gw = fixtureGW[p.fixtureId];
+      if (!computedGwPoints[p.uid]) computedGwPoints[p.uid] = {};
+      computedGwPoints[p.uid][gw] = (computedGwPoints[p.uid][gw] || 0) + (p.points || 0);
+    }
+  });
+  extrasSnap.forEach(d => {
+    const e = d.data();
+    if (e.scored && e.gameweek && (e.points || 0) > 0) {
+      const gw = Number(e.gameweek);
+      if (!computedGwPoints[e.uid]) computedGwPoints[e.uid] = {};
+      computedGwPoints[e.uid][gw] = (computedGwPoints[e.uid][gw] || 0) + (e.points || 0);
+    }
+  });
+
+  // Merge computedGwPoints into rows
+  rows.forEach(r => {
+    r.gwPoints = { ...(computedGwPoints[r.uid] || {}), ...(r.gwPoints || {}) };
+  });
+
+  // Collect all scored gameweeks across all players
+  const gwSet = new Set();
+  rows.forEach(r => {
+    if (r.gwPoints) Object.keys(r.gwPoints).forEach(gw => gwSet.add(Number(gw)));
+  });
+  // Also check finished fixtures in case a GW finished
+  fixtures.forEach(f => {
+    if (f.status === 'FINISHED') gwSet.add(Number(f.gameweek));
+  });
+  const allGWs = [...gwSet].sort((a, b) => a - b);
+
+  // Compute Best Gameweek for each player
+  rows.forEach(r => {
+    if (!r.gwPoints || !Object.keys(r.gwPoints).length) {
+      r.bestGW = '–';
+    } else {
+      const entries = Object.entries(r.gwPoints).map(([gw, pts]) => ({ gw: Number(gw), pts: Number(pts) })).filter(e => e.pts > 0);
+      if (!entries.length) {
+        r.bestGW = '–';
+      } else {
+        const maxPts = Math.max(...entries.map(e => e.pts));
+        const matching = entries.filter(e => e.pts === maxPts).sort((a, b) => a.gw - b.gw);
+        const best = matching[0];
+        r.bestGW = `GW ${best.gw} (${best.pts} pts)`;
+      }
+    }
+  });
+
+  // For each gameweek, compute rank 1, 2, 3 scores across all players
+  const gwTopScores = {};
+  allGWs.forEach(gw => {
+    const scores = rows.map(r => r.gwPoints?.[gw] || 0).filter(s => s > 0);
+    const distinct = [...new Set(scores)].sort((a, b) => b - a);
+    gwTopScores[gw] = {
+      gold: distinct[0] || null,
+      silver: distinct[1] || null,
+      bronze: distinct[2] || null
+    };
+  });
+
+  // Build header row:
+  // Column order: Rank | Player | Total (frozen trio) | Best GW | Match Pts | Table Pts | Extras | Streak | Predicted | Correct | Perfect | Accuracy | GW 1 | GW 2 | …
+  const staticHeaders = ['Best GW', 'Match Pts', 'Table Pts', 'Extras', 'Streak', 'Predicted', 'Correct', 'Perfect', 'Accuracy'];
+  const gwHeaders = allGWs.map(gw => `GW ${gw}`);
+  head.innerHTML = `<tr>
+    <th class="lb-freeze lb-rank">Rank</th>
+    <th class="lb-freeze lb-player">Player</th>
+    <th class="lb-freeze lb-total">Total</th>
+    ${staticHeaders.map(h => `<th>${h}</th>`).join('')}
+    ${gwHeaders.map(h => `<th class="lb-gw-col">${h}</th>`).join('')}
+  </tr>`;
+
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="${3 + staticHeaders.length + allGWs.length}" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = '';
   rows.forEach(r => {
     const tr = document.createElement('tr');
     const zone = positionZoneClass(r.rank, totalPlayers);
     if (zone) tr.classList.add(zone);
+
+    const gwCells = allGWs.map(gw => {
+      const pts = r.gwPoints?.[gw];
+      if (pts === undefined || pts === null) return `<td class="lb-gw-col">–</td>`;
+      const tops = gwTopScores[gw];
+      let medalIcon = '';
+      if (pts > 0) {
+        if (pts === tops.gold) medalIcon = '<span class="lb-gw-medal" title="Star of Gameweek (1st)">🌟</span> ';
+        else if (pts === tops.silver) medalIcon = '<span class="lb-gw-medal" title="Challenger of Gameweek (2nd)">🥈</span> ';
+        else if (pts === tops.bronze) medalIcon = '<span class="lb-gw-medal" title="In-The-Run (3rd)">🥉</span> ';
+      }
+      return `<td class="lb-gw-col">${medalIcon}${pts}</td>`;
+    }).join('');
+
+    const accuracy = r.accuracyPct ?? (r.matchesPredicted > 0 ? Math.round(((r.correctPredictions || 0) / r.matchesPredicted) * 100) : 0);
+
+    let rankDisplay = `${r.rank}`;
+    if (r.rank === 1) rankDisplay = `<span title="1st Place · Leader">👑</span> 1`;
+    else if (r.rank === 2) rankDisplay = `<span title="2nd Place · Challenger">🥈</span> 2`;
+    else if (r.rank === 3) rankDisplay = `<span title="3rd Place · In-The-Run">🥉</span> 3`;
+
     tr.innerHTML = `
-      <td>${r.rank}</td><td>${r.displayName || r.email || r.uid}</td>
-      <td>${r.matchPoints || 0}</td><td>${r.tablePoints || 0}</td><td>${r.extraPoints || 0}</td>
+      <td class="lb-freeze lb-rank">${rankDisplay}</td>
+      <td class="lb-freeze lb-player" title="${r.displayName || r.email || r.uid}">${r.displayName || r.email || r.uid}</td>
+      <td class="lb-freeze lb-total">${r.totalPoints || 0}</td>
+      <td style="font-family:var(--font-mono); font-weight:700; color:var(--chalk); white-space:nowrap;">${r.bestGW}</td>
+      <td>${r.matchPoints || 0}</td>
+      <td>${r.tablePoints || 0}</td>
+      <td>${r.extraPoints || 0}</td>
       <td>${r.currentStreak || 0}</td>
-      <td>${r.matchesPredicted || 0}</td><td>${r.correctPredictions || 0}</td><td>${r.perfectPredictions || 0}</td>
-      <td>${r.totalPoints || 0}</td>
+      <td>${r.matchesPredicted || 0}</td>
+      <td>${r.correctPredictions || 0}</td>
+      <td>${r.perfectPredictions || 0}</td>
+      <td>${accuracy}%</td>
+      ${gwCells}
     `;
     body.appendChild(tr);
   });
-  if (!rows.length) body.innerHTML = `<tr><td colspan="10" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
 
   await loadPlayers(rows); // same leaderboard data, no extra Firestore read for the player cards below
 }
@@ -1059,14 +1753,17 @@ async function loadPlayers(leaderboardRows) {
 function renderPlayers(list) {
   const grid = document.getElementById('playersGrid');
   if (!list.length) { grid.innerHTML = '<p class="empty-state">No one has signed in yet — be the first!</p>'; return; }
-  grid.innerHTML = list.map(p => `
-    <div class="player-card">
-      <div class="name">${p.name}${p.rank ? ` <span style="color:var(--amber); font-family:var(--font-mono); font-size:11px;">#${p.rank}</span>` : ''}</div>
-      <div class="meta">${p.totalPoints} pts total ${p.badgeCount ? `· 🥇 ${p.badgeCount}` : ''}</div>
-      <div class="meta">🎯 ${p.matchPoints} · 📋 ${p.tablePoints} · ⚡ ${p.extraPoints} ${p.currentStreak ? `· 🔥 ${p.currentStreak}-streak` : ''}</div>
-      <div class="meta">🎪 ${p.exactCount} perfect ${p.accuracyPct ? `· ✅ ${p.accuracyPct}% accuracy` : ''}</div>
-    </div>
-  `).join('');
+  grid.innerHTML = list.map(p => {
+    const rankBadge = p.rank === 1 ? '👑 #1' : p.rank === 2 ? '🥈 #2' : p.rank === 3 ? '🥉 #3' : (p.rank ? `#${p.rank}` : '');
+    return `
+      <div class="player-card">
+        <div class="name">${p.name}${rankBadge ? ` <span style="color:var(--chalk-dim); font-family:var(--font-mono); font-size:11px;">${rankBadge}</span>` : ''}</div>
+        <div class="meta">${p.totalPoints} pts total ${p.badgeCount ? `· 🥇 ${p.badgeCount}` : ''}</div>
+        <div class="meta">🎯 ${p.matchPoints} · 📋 ${p.tablePoints} · ⚡ ${p.extraPoints} ${p.currentStreak ? `· 🔥 ${p.currentStreak}-streak` : ''}</div>
+        <div class="meta">🎪 ${p.exactCount} perfect ${p.accuracyPct ? `· ✅ ${p.accuracyPct}% accuracy` : ''}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 // ---------- Season Awards tab ----------
@@ -1223,14 +1920,23 @@ async function loadProfile() {
     avatarEl.style.display = 'block';
   }
 
-  const [predsSnap, allFixtures, lbSnap, badgesSnap] = await Promise.all([
+  const [predsSnap, allFixtures, lbSnap, badgesSnap, allPredsSnap, extrasSnap, tablePredSnap, cfgSnap] = await Promise.all([
     getDocs(query(collection(db, 'predictions'), where('uid', '==', currentUser.uid))),
     getAllFixtures(),
     getDoc(doc(db, 'leaderboard', currentUser.uid)),
-    getDoc(doc(db, 'badges', currentUser.uid))
+    getDoc(doc(db, 'badges', currentUser.uid)),
+    getDocs(collection(db, 'predictions')),
+    getDocs(collection(db, 'gwExtraPredictions')),
+    getDoc(doc(db, 'tablePredictions', currentUser.uid)),
+    getDoc(doc(db, 'config', 'current'))
   ]);
   const fixturesById = {};
-  allFixtures.forEach(f => { fixturesById[f.id] = f; });
+  const fixturesByGW = {};
+  allFixtures.forEach(f => {
+    fixturesById[f.id] = f;
+    if (!fixturesByGW[f.gameweek]) fixturesByGW[f.gameweek] = [];
+    fixturesByGW[f.gameweek].push(f);
+  });
 
   const preds = predsSnap.docs.map(d => d.data()).sort((a, b) => {
     const fa = fixturesById[a.fixtureId], fb = fixturesById[b.fixtureId];
@@ -1242,14 +1948,212 @@ async function loadProfile() {
   const outcomeCount = scoredPreds.filter(p => p.points === 10).length;
   const accuracy = scoredPreds.length ? Math.round(((exactCount + outcomeCount) / scoredPreds.length) * 100) : 0;
   const lb = lbSnap.exists() ? lbSnap.data() : {};
+  const cfg = cfgSnap.exists() ? cfgSnap.data() : {};
+
+  // Process user's extras
+  const myExtras = extrasSnap.docs.map(d => d.data()).filter(e => e.uid === currentUser.uid);
+  const myExtrasByGW = {};
+  myExtras.forEach(e => { myExtrasByGW[e.gameweek] = e; });
+
+  let myExtrasPicksTotal = 0;
+  let myExtrasPicksHit = 0;
+  let totalExtrasPoints = 0;
+
+  myExtras.forEach(e => {
+    totalExtrasPoints += (e.points || 0);
+    const gw = e.gameweek;
+    const gwFixtures = fixturesByGW[gw] || [];
+    const gwFinished = gwFixtures.filter(f => f.status === 'FINISHED');
+    const isGwDone = gwFinished.length === gwFixtures.length && gwFixtures.length > 0;
+    if (isGwDone) {
+      // 1. Top scoring team
+      if (e.topScoringTeam) {
+        myExtrasPicksTotal++;
+        const goalsByTeam = {};
+        gwFixtures.forEach(f => {
+          goalsByTeam[f.homeTeam] = (goalsByTeam[f.homeTeam] || 0) + (f.homeScore ?? 0);
+          goalsByTeam[f.awayTeam] = (goalsByTeam[f.awayTeam] || 0) + (f.awayScore ?? 0);
+        });
+        const maxGoals = Math.max(...Object.values(goalsByTeam), 0);
+        const topTeams = Object.keys(goalsByTeam).filter(t => goalsByTeam[t] === maxGoals && maxGoals > 0);
+        if (topTeams.includes(e.topScoringTeam)) myExtrasPicksHit++;
+      }
+      // 2. Clean sheet team
+      if (e.cleanSheetTeam) {
+        myExtrasPicksTotal++;
+        const csTeams = [];
+        gwFixtures.forEach(f => {
+          if (f.awayScore === 0) csTeams.push(f.homeTeam);
+          if (f.homeScore === 0) csTeams.push(f.awayTeam);
+        });
+        if (csTeams.includes(e.cleanSheetTeam)) myExtrasPicksHit++;
+      }
+      // 3. Highest scoring game
+      if (e.highestScoringGame) {
+        myExtrasPicksTotal++;
+        const matchGoals = gwFixtures.map(f => ({ id: f.id, total: (f.homeScore ?? 0) + (f.awayScore ?? 0) }));
+        const maxMatchGoals = Math.max(...matchGoals.map(m => m.total), 0);
+        const topMatchIds = new Set(matchGoals.filter(m => m.total === maxMatchGoals).flatMap(m => [String(m.id), Number(m.id)]));
+        if (topMatchIds.has(e.highestScoringGame)) myExtrasPicksHit++;
+      }
+      // 4. Lowest scoring game
+      if (e.lowestScoringGame) {
+        myExtrasPicksTotal++;
+        const matchGoals = gwFixtures.map(f => ({ id: f.id, total: (f.homeScore ?? 0) + (f.awayScore ?? 0) }));
+        const minMatchGoals = Math.min(...matchGoals.map(m => m.total));
+        const lowMatchIds = new Set(matchGoals.filter(m => m.total === minMatchGoals).flatMap(m => [String(m.id), Number(m.id)]));
+        if (lowMatchIds.has(e.lowestScoringGame)) myExtrasPicksHit++;
+      }
+    }
+  });
+
+  // Calculate League Table Prediction live performance
+  let currentTableLivePoints = 0;
+  let exactTableHits = 0;
+  let closeTableHits = 0;
+  const tablePred = tablePredSnap.exists() ? tablePredSnap.data() : null;
+  const standingsOrder = cfg?.standingsOrder || [];
+
+  if (tablePred && Array.isArray(tablePred.teams) && tablePred.teams.length > 0 && standingsOrder.length > 0) {
+    tablePred.teams.forEach(t => {
+      const actualRank = standingsOrder.indexOf(t.team) + 1;
+      if (actualRank > 0) {
+        const diff = Math.abs(t.predictedPosition - actualRank);
+        currentTableLivePoints += Math.max(0, 20 - 2 * diff);
+        if (diff === 0) exactTableHits++;
+        else if (diff <= 1) closeTableHits++;
+      }
+    });
+  }
 
   document.getElementById('profileStats').innerHTML = `
     <div class="profile-stat-card"><div class="value">${lb.totalPoints || 0}</div><div class="label">Total Points</div></div>
-    <div class="profile-stat-card"><div class="value">${lb.rank || '—'}</div><div class="label">Current Rank</div></div>
-    <div class="profile-stat-card"><div class="value">${exactCount}</div><div class="label">Exact Scores</div></div>
-    <div class="profile-stat-card"><div class="value">${accuracy}%</div><div class="label">Accuracy</div></div>
+    <div class="profile-stat-card"><div class="value">${lb.rank ? '#' + lb.rank : '—'}</div><div class="label">Current Rank</div></div>
+    <div class="profile-stat-card"><div class="value">${exactCount}</div><div class="label">Exact Match Scores</div></div>
+    <div class="profile-stat-card"><div class="value">${accuracy}%</div><div class="label">Match Accuracy</div></div>
+    <div class="profile-stat-card"><div class="value">${totalExtrasPoints} pts</div><div class="label">Extras (${myExtrasPicksHit}/${myExtrasPicksTotal || 0} hit)</div></div>
+    <div class="profile-stat-card"><div class="value">${tablePred ? currentTableLivePoints + ' pts' : '–'}</div><div class="label">Table Live Score (${exactTableHits}/20 exact, ${closeTableHits} ±1)</div></div>
     <div class="profile-stat-card"><div class="value">${lb.currentStreak || 0}</div><div class="label">Current Streak</div></div>
   `;
+
+  // Accolades / Honors Cards for this player
+  const honorsEl = document.getElementById('profileHonors');
+  if (honorsEl) {
+    const honorCards = [];
+    if (lb.rank === 1 && (lb.totalPoints || 0) > 0) {
+      honorCards.push(`
+        <div class="gw-star-card">
+          <div class="star-badge-header">
+            <div class="star-left-group">
+              <div class="star-anim-wrap" title="Star Predictor"><span class="flying-ball">⚽</span><span class="kicking-player">🏃‍♂️</span><span class="star-trophy">🌟</span></div>
+              <div class="star-title-wrap">
+                <div class="star-tag">👑 Overall Season Leader · 1st Place</div>
+                <div class="star-player-name">${currentUser.displayName}</div>
+              </div>
+            </div>
+            <div class="star-total-pts"><span class="star-pts-num">${lb.totalPoints}</span><span class="star-pts-lbl">TOTAL PTS</span></div>
+          </div>
+        </div>
+      `);
+    } else if (lb.rank === 2 && (lb.totalPoints || 0) > 0) {
+      honorCards.push(`
+        <div class="gw-challenger-card">
+          <div class="star-badge-header">
+            <div class="star-left-group">
+              <div class="challenger-anim-wrap" title="Challenger"><span class="fist-bump">👊</span><span class="challenger-medal">🥈</span></div>
+              <div class="star-title-wrap">
+                <div class="challenger-tag">🥈 Season Challenger · 2nd Place</div>
+                <div class="star-player-name">${currentUser.displayName}</div>
+              </div>
+            </div>
+            <div class="challenger-total-pts"><span class="star-pts-num">${lb.totalPoints}</span><span class="star-pts-lbl">TOTAL PTS</span></div>
+          </div>
+        </div>
+      `);
+    } else if (lb.rank === 3 && (lb.totalPoints || 0) > 0) {
+      honorCards.push(`
+        <div class="podium-card podium-rank-3">
+          <div class="star-badge-header">
+            <div class="star-left-group">
+              <div class="bronze-anim-wrap" title="In-The-Run"><span class="walking-player">🚶</span><span class="bronze-medal">🥉</span></div>
+              <div class="star-title-wrap">
+                <div class="bronze-tag">🥉 Season In-The-Run · 3rd Place</div>
+                <div class="star-player-name">${currentUser.displayName}</div>
+              </div>
+            </div>
+            <div class="bronze-total-pts"><span class="star-pts-num">${lb.totalPoints}</span><span class="star-pts-lbl">TOTAL PTS</span></div>
+          </div>
+        </div>
+      `);
+    }
+
+    // Calculate per-gameweek honors
+    const fixtureGW = {};
+    allFixtures.forEach(f => { fixtureGW[f.id] = Number(f.gameweek); });
+    const userGwScores = {};
+    allPredsSnap.forEach(d => {
+      const p = d.data();
+      if (p.scored && p.fixtureId && fixtureGW[p.fixtureId]) {
+        const gw = fixtureGW[p.fixtureId];
+        if (!userGwScores[gw]) userGwScores[gw] = {};
+        userGwScores[gw][p.uid] = (userGwScores[gw][p.uid] || 0) + (p.points || 0);
+      }
+    });
+    extrasSnap.forEach(d => {
+      const e = d.data();
+      if (e.scored && e.gameweek) {
+        const gw = Number(e.gameweek);
+        if (!userGwScores[gw]) userGwScores[gw] = {};
+        userGwScores[gw][e.uid] = (userGwScores[gw][e.uid] || 0) + (e.points || 0);
+      }
+    });
+
+    Object.keys(userGwScores).map(Number).sort((a, b) => b - a).forEach(gw => {
+      const sorted = Object.entries(userGwScores[gw]).map(([uid, pts]) => ({ uid, pts })).filter(s => s.pts > 0).sort((a, b) => b.pts - a.pts);
+      if (sorted.length > 0) {
+        if (sorted[0]?.uid === currentUser.uid) {
+          honorCards.push(`
+            <div class="gw-star-card">
+              <div class="star-badge-header">
+                <div class="star-left-group">
+                  <div class="star-anim-wrap" title="Star of the Gameweek"><span class="flying-ball">⚽</span><span class="kicking-player">🏃‍♂️</span><span class="star-trophy">🌟</span></div>
+                  <div class="star-title-wrap">
+                    <div class="star-tag">⭐ Star of Gameweek ${gw} (Top Performer)</div>
+                    <div class="star-player-name">${currentUser.displayName}</div>
+                  </div>
+                </div>
+                <div class="star-total-pts"><span class="star-pts-num">${sorted[0].pts}</span><span class="star-pts-lbl">GW PTS</span></div>
+              </div>
+            </div>
+          `);
+        } else if (sorted[1]?.uid === currentUser.uid) {
+          honorCards.push(`
+            <div class="gw-challenger-card">
+              <div class="star-badge-header">
+                <div class="star-left-group">
+                  <div class="challenger-anim-wrap" title="Challenger of the Gameweek"><span class="fist-bump">👊</span><span class="challenger-medal">🥈</span></div>
+                  <div class="star-title-wrap">
+                    <div class="challenger-tag">🥈 Challenger of Gameweek ${gw} (Runner Up)</div>
+                    <div class="star-player-name">${currentUser.displayName}</div>
+                  </div>
+                </div>
+                <div class="challenger-total-pts"><span class="star-pts-num">${sorted[1].pts}</span><span class="star-pts-lbl">GW PTS</span></div>
+              </div>
+            </div>
+          `);
+        }
+      }
+    });
+
+    if (honorCards.length > 0) {
+      honorsEl.innerHTML = `
+        <h2 class="section-title" style="margin-top:24px;">🎖️ My Honors & Podium Cards</h2>
+        <div class="podium-cards-grid">${honorCards.join('')}</div>
+      `;
+    } else {
+      honorsEl.innerHTML = '';
+    }
+  }
 
   // Badges (moved here from the old standalone Badges tab)
   const badgeGrid = document.getElementById('badgeGrid');
@@ -1279,18 +2183,22 @@ async function loadProfile() {
   historyEl.innerHTML = gwNumbers.map(gw => {
     const gwPreds = byGW[gw];
     const gwScored = gwPreds.filter(p => p.scored);
-    const gwPoints = gwPreds.reduce((sum, p) => sum + (p.points || 0), 0);
+    const matchPoints = gwPreds.reduce((sum, p) => sum + (p.points || 0), 0);
     const gwExact = gwScored.filter(p => p.points === 25).length;
     const gwCorrect = gwScored.filter(p => p.points === 25 || p.points === 10).length;
     const gwAccuracy = gwScored.length ? Math.round((gwCorrect / gwScored.length) * 100) : 0;
+
+    const myExtra = myExtrasByGW[gw];
+    const extraPoints = myExtra?.points || 0;
+    const totalGwPoints = matchPoints + extraPoints;
 
     const rows = gwPreds.map(p => {
       const fx = fixturesById[p.fixtureId];
       let pillClass = 'pending', pillText = 'Pending';
       if (p.scored) {
-        if (p.points === 25) { pillClass = 'exact'; pillText = 'Exact! +25'; }
-        else if (p.points === 10) { pillClass = 'outcome'; pillText = 'Outcome +10'; }
-        else { pillClass = 'miss'; pillText = 'Missed'; }
+        if (p.points === 25) { pillClass = 'exact'; pillText = '<span class="result-bullseye" style="margin-right:2px;">🎯</span> Exact! +25'; }
+        else if (p.points === 10) { pillClass = 'outcome'; pillText = 'Correct +10'; }
+        else { pillClass = 'miss'; pillText = 'Incorrect'; }
       }
       return `
         <div class="history-row">
@@ -1301,15 +2209,123 @@ async function loadProfile() {
       `;
     }).join('');
 
+    // Gameweek extras section
+    let extrasSectionHTML = '';
+    if (myExtra && (myExtra.topScoringTeam || myExtra.cleanSheetTeam || myExtra.highestScoringGame || myExtra.lowestScoringGame)) {
+      const gwFixtures = fixturesByGW[gw] || [];
+      const gwFinished = gwFixtures.filter(f => f.status === 'FINISHED');
+      const isGwDone = gwFinished.length === gwFixtures.length && gwFixtures.length > 0;
+
+      // 1. Top scoring team(s)
+      const goalsByTeam = {};
+      gwFixtures.forEach(f => {
+        if (f.status === 'FINISHED' || f.status === 'IN_PLAY' || f.status === 'PAUSED') {
+          goalsByTeam[f.homeTeam] = (goalsByTeam[f.homeTeam] || 0) + (f.homeScore ?? 0);
+          goalsByTeam[f.awayTeam] = (goalsByTeam[f.awayTeam] || 0) + (f.awayScore ?? 0);
+        }
+      });
+      const maxGoals = Math.max(...Object.values(goalsByTeam), 0);
+      const topTeams = Object.keys(goalsByTeam).filter(t => goalsByTeam[t] === maxGoals && maxGoals > 0);
+      let topPill = '<span class="extra-pill pending">Pending</span>';
+      if (myExtra.topScoringTeam) {
+        if (isGwDone) {
+          topPill = topTeams.includes(myExtra.topScoringTeam)
+            ? '<span class="extra-pill exact">✓ +20</span>'
+            : '<span class="extra-pill miss">✗ 0</span>';
+        }
+      }
+
+      // 2. Clean sheet team(s)
+      const csTeams = [];
+      gwFinished.forEach(f => {
+        if (f.awayScore === 0) csTeams.push(f.homeTeam);
+        if (f.homeScore === 0) csTeams.push(f.awayTeam);
+      });
+      let csPill = '<span class="extra-pill pending">Pending</span>';
+      if (myExtra.cleanSheetTeam) {
+        if (isGwDone) {
+          csPill = csTeams.includes(myExtra.cleanSheetTeam)
+            ? '<span class="extra-pill exact">✓ +20</span>'
+            : '<span class="extra-pill miss">✗ 0</span>';
+        }
+      }
+
+      // 3. Highest scoring game(s)
+      const matchGoals = gwFixtures.map(f => ({ fx: f, id: f.id, total: (f.homeScore ?? 0) + (f.awayScore ?? 0) }));
+      const maxMatchGoals = Math.max(...matchGoals.map(m => m.total), 0);
+      const topMatchIds = new Set(matchGoals.filter(m => m.total === maxMatchGoals && (m.fx.status === 'FINISHED' || m.fx.status === 'IN_PLAY')).flatMap(m => [String(m.id), Number(m.id)]));
+      const highGameFx = gwFixtures.find(f => String(f.id) === String(myExtra.highestScoringGame));
+      const highGameName = highGameFx ? `${highGameFx.homeTeam} vs ${highGameFx.awayTeam}` : (myExtra.highestScoringGame || '–');
+      let highPill = '<span class="extra-pill pending">Pending</span>';
+      if (myExtra.highestScoringGame) {
+        if (isGwDone) {
+          highPill = topMatchIds.has(myExtra.highestScoringGame)
+            ? '<span class="extra-pill exact">✓ +20</span>'
+            : '<span class="extra-pill miss">✗ 0</span>';
+        }
+      }
+
+      // 4. Lowest scoring game(s)
+      const minMatchGoals = gwFinished.length > 0 ? Math.min(...gwFinished.map(f => (f.homeScore ?? 0) + (f.awayScore ?? 0))) : 0;
+      const lowMatchIds = new Set(gwFinished.filter(f => (f.homeScore ?? 0) + (f.awayScore ?? 0) === minMatchGoals).flatMap(f => [String(f.id), Number(f.id)]));
+      const lowGameFx = gwFixtures.find(f => String(f.id) === String(myExtra.lowestScoringGame));
+      const lowGameName = lowGameFx ? `${lowGameFx.homeTeam} vs ${lowGameFx.awayTeam}` : (myExtra.lowestScoringGame || '–');
+      let lowPill = '<span class="extra-pill pending">Pending</span>';
+      if (myExtra.lowestScoringGame) {
+        if (isGwDone) {
+          lowPill = lowMatchIds.has(myExtra.lowestScoringGame)
+            ? '<span class="extra-pill exact">✓ +20</span>'
+            : '<span class="extra-pill miss">✗ 0</span>';
+        }
+      }
+
+      extrasSectionHTML = `
+        <div class="profile-gw-extras-card">
+          <div class="extras-title">⚡ Gameweek ${gw} Extras Predictions ${extraPoints ? `<span style="color:var(--turf-bright); margin-left:6px;">(+${extraPoints} pts)</span>` : ''}</div>
+          <div class="profile-extras-grid">
+            <div class="profile-extra-item">
+              <span class="lbl">🎯 Top Scoring Team</span>
+              <div class="extra-val-line">
+                <span class="val">${myExtra.topScoringTeam || '–'}</span>
+                ${myExtra.topScoringTeam ? topPill : '<span class="extra-pill pending">–</span>'}
+              </div>
+            </div>
+            <div class="profile-extra-item">
+              <span class="lbl">🛡️ Clean Sheet</span>
+              <div class="extra-val-line">
+                <span class="val">${myExtra.cleanSheetTeam || '–'}</span>
+                ${myExtra.cleanSheetTeam ? csPill : '<span class="extra-pill pending">–</span>'}
+              </div>
+            </div>
+            <div class="profile-extra-item">
+              <span class="lbl">🔥 Highest Scoring Game</span>
+              <div class="extra-val-line">
+                <span class="val">${highGameName}</span>
+                ${myExtra.highestScoringGame ? highPill : '<span class="extra-pill pending">–</span>'}
+              </div>
+            </div>
+            <div class="profile-extra-item">
+              <span class="lbl">🔒 Lowest Scoring Game</span>
+              <div class="extra-val-line">
+                <span class="val">${lowGameName}</span>
+                ${myExtra.lowestScoringGame ? lowPill : '<span class="extra-pill pending">–</span>'}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="profile-gw-group">
         <h3 class="section-title" style="margin-top:0;">Gameweek ${gw}</h3>
         <div class="profile-gw-stats">
-          <span><strong>${gwPoints}</strong> points</span>
-          <span><strong>${gwExact}</strong> exact</span>
-          <span><strong>${gwAccuracy}%</strong> accuracy${gwScored.length < gwPreds.length ? ' (partial — some still pending)' : ''}</span>
+          <span><strong>${totalGwPoints}</strong> total points ${extraPoints > 0 ? `(incl. ${extraPoints} extras pts)` : ''}</span>
+          <span><strong>${gwExact}</strong> exact match scores</span>
+          <span><strong>${gwAccuracy}%</strong> match accuracy${gwScored.length < gwPreds.length ? ' (partial — some still pending)' : ''}</span>
         </div>
         ${rows}
+        ${extrasSectionHTML}
       </div>
     `;
   }).join('');

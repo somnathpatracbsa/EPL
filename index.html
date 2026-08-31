@@ -17,6 +17,10 @@
       <span class="brand-mark">⚔️</span>
       <span class="brand-name">PL Fan Warzone</span>
       <span class="brand-sub">Prediction Gameroom</span>
+      <div class="brand-goal-anim" title="Goal!">
+        <span class="brand-ball">⚽</span>
+        <span class="brand-net">🥅</span>
+      </div>
     </div>
     <div class="auth-area" id="authArea">
       <button id="signInBtn" class="btn btn-primary">Sign in with Google</button>
@@ -36,7 +40,6 @@
     <button class="tab" data-tab="community">🗣️ Games</button>
     <button class="tab" data-tab="leaderboard">🏆 Leaderboard</button>
     <button class="tab" data-tab="awards">🎖️ Season Awards</button>
-    <button class="tab" data-tab="highlights">🔥 Highlights</button>
     <button class="tab" data-tab="profile">👤 My Profile</button>
   </nav>
 
@@ -50,8 +53,8 @@
 
       <h2 class="section-title">How it works</h2>
       <div class="home-steps">
-        <div class="home-step"><span class="icon">🎯</span><div><strong>Predict Gameweek</strong> — enter a scoreline for every match before kickoff. Once a match starts, that prediction locks.</div></div>
-        <div class="home-step"><span class="icon">📋</span><div><strong>Predict League Table</strong> — drag (or use the ▲▼ buttons on mobile) to set your predicted final standings, any time until the admin locks it.</div></div>
+        <div class="home-step"><span class="icon">🎯</span><div><strong>Predict Gameweek</strong> — enter a scoreline for every match before kickoff. Once a match starts, that prediction locks. Predict high/low scoring teams/games to gain extra points</div></div>
+        <div class="home-step"><span class="icon">📋</span><div><strong>Predict League Table</strong> — Set your predicted final standings before transfer window closes. You can change it during second transfer window again.</div></div>
         <div class="home-step"><span class="icon">🗂️</span><div><strong>Table</strong> — compare everyone's table predictions side by side against the real current standings.</div></div>
         <div class="home-step"><span class="icon">🗣️</span><div><strong>Games</strong> — see everyone's scoreline predictions for every gameweek, with crowd sentiment and results.</div></div>
         <div class="home-step"><span class="icon">🏆</span><div><strong>Leaderboard</strong> — everyone's total points, updated automatically about once an hour.</div></div>
@@ -65,6 +68,7 @@
         <div class="score-rule"><span class="pts">10 pts</span> Correct outcome (win/draw/loss), wrong score</div>
         <div class="score-rule"><span class="pts">+5 / +10 / +20</span> Streak bonus at 3, 5, or 10 gameweeks running with at least one correct outcome (highest tier only, not stacked)</div>
         <div class="score-rule"><span class="pts">+15 pts each</span> Correct "highest scoring team" or "clean sheet team" gameweek extra guess</div>
+        <div class="score-rule"><span class="pts">+20 pts each</span> Correct "highest scoring game" or "lowest scoring game" gameweek extra guess</div>
         <div class="score-rule"><span class="pts">Up to 20 pts/team</span> League table prediction — <code>max(0, 20 − 2×|predicted position − actual position|)</code> per team, checked at gameweek 19 (worth 40%) and again at season end (worth 60%)</div>
         <div class="score-rule"><span class="pts">Honour system</span> Player-level picks (top scorer, Golden Boot, etc.) aren't auto-scored — the free data feed doesn't include individual player stats</div>
       </div>
@@ -76,7 +80,14 @@
     <section id="predict" class="panel">
       <div class="panel-head">
         <h1>Gameweek <span id="gwNumber">—</span> Predictions</h1>
-        <p class="sub">Lock in your scorelines before kickoff. Once a match starts, it's locked forever. Save a prediction to unlock the crowd's take on that match.</p>
+        <p class="sub">Lock in your scorelines before kickoff. Once a match starts, it's locked forever.</p>
+        <div class="home-scoring" style="margin: 10px 0 6px;">
+          <div class="score-rule"><span class="pts">25 pts</span> Exact scoreline correct</div>
+          <div class="score-rule"><span class="pts">10 pts</span> Correct outcome (win/draw/loss), wrong score</div>
+          <div class="score-rule"><span class="pts">+5 / +10 / +20</span> Streak bonus at 3, 5, or 10 gameweeks running with at least one correct outcome (highest tier only, not stacked)</div>
+          <div class="score-rule"><span class="pts">+15 pts each</span> Correct "highest scoring team" or "clean sheet team" gameweek extra guess</div>
+          <div class="score-rule"><span class="pts">+20 pts each</span> Correct "highest scoring game" or "lowest scoring game" gameweek extra guess</div>
+        </div>
       </div>
 
       <div class="save-all-bar">
@@ -92,23 +103,44 @@
         <h2 class="section-title">⚡ Gameweek Extras</h2>
         <p class="sub">Auto-scored based on real results.</p>
         <div id="gwExtrasLockNote" class="crowd-locked-note" style="display:none;"></div>
-        <div class="extras-grid">
-          <label>Highest scoring team this gameweek
-            <select id="topScoringTeam"></select>
-          </label>
-          <label>A team that keeps a clean sheet
-            <select id="cleanSheetTeam"></select>
-          </label>
+        <div class="extras-rows">
+          <div class="extras-row">
+            <label>
+              <span>🎯 Highest scoring team <span class="extra-reward">(+15 pts)</span></span>
+              <select id="topScoringTeam"></select>
+            </label>
+            <label>
+              <span>🛡️ Team keeping a clean sheet <span class="extra-reward">(+15 pts)</span></span>
+              <select id="cleanSheetTeam"></select>
+            </label>
+          </div>
+          <div class="extras-row">
+            <label>
+              <span>🔥 Highest scoring game <span class="extra-reward">(+20 pts)</span></span>
+              <select id="highestScoringGame"></select>
+            </label>
+            <label>
+              <span>🔒 Lowest scoring game <span class="extra-reward">(+20 pts)</span></span>
+              <select id="lowestScoringGame"></select>
+            </label>
+          </div>
         </div>
         <button id="saveExtrasBtn" class="btn btn-primary">Save Gameweek Extras</button>
         <span id="extrasStatus" class="pred-status"></span>
+        <div id="gwExtrasCrowdStats" class="extras-crowd-stats"></div>
       </div>
     </section>
 
     <section id="table" class="panel">
       <div class="panel-head">
         <h1>Predict League Table</h1>
-        <p class="sub">Drag teams (or use the ▲▼ buttons — works on mobile too) into the order you think they'll finish. Scored at mid-season and at the final whistle.</p>
+        <p class="sub">Drag teams (or use the ▲▼ buttons) into the order you think they'll finish. Scored at mid-season and at the final whistle.</p>
+        <div class="score-rule" style="margin-top:10px;"><span class="pts">Up to 20 pts/team</span> League table prediction — <code>max(0, 20 − 2×|predicted position − actual position|)</code> per team, checked at gameweek 19 (worth 40%) and again at season end (worth 60%)</div>
+        <div class="table-accuracy-legend">
+          <span class="legend-item"><span class="matrix-tick-icon" style="animation:none;">✓</span> Exact Position</span>
+          <span class="legend-item"><span class="matrix-dot dot-diff-1" style="animation:none;"></span> Off by 1 (±1)</span>
+          <span class="legend-item"><span class="matrix-dot dot-diff-2" style="animation:none;"></span> Off by 2 (±2)</span>
+        </div>
       </div>
       <div id="tableLockBanner" class="lock-banner" style="display:none;"></div>
       <div id="adminLockControls" class="admin-controls" style="display:none;">
@@ -124,6 +156,12 @@
       <div class="panel-head">
         <h1>Community Table Predictions</h1>
         <p class="sub">Every player's predicted finishing position for every team, side by side. Rows are sorted by the current real league standings.</p>
+        <div class="score-rule" style="margin-top:10px;"><span class="pts">Up to 20 pts/team</span> League table prediction — <code>max(0, 20 − 2×|predicted position − actual position|)</code> per team, checked at gameweek 19 (worth 40%) and again at season end (worth 60%)</div>
+        <div class="table-accuracy-legend">
+          <span class="legend-item"><span class="matrix-tick-icon" style="animation:none;">✓</span> Exact Position</span>
+          <span class="legend-item"><span class="matrix-dot dot-diff-1" style="animation:none;"></span> Off by 1 (±1)</span>
+          <span class="legend-item"><span class="matrix-dot dot-diff-2" style="animation:none;"></span> Off by 2 (±2)</span>
+        </div>
       </div>
       <div id="allTablesGrid" class="all-tables-grid"></div>
     </section>
@@ -132,7 +170,15 @@
       <div class="panel-head">
         <h1>Community Game Predictions</h1>
         <p class="sub">Every scoreline, from everyone, for every gameweek — newest first.</p>
+        <div class="home-scoring" style="margin: 10px 0 6px;">
+          <div class="score-rule"><span class="pts">25 pts</span> Exact scoreline correct</div>
+          <div class="score-rule"><span class="pts">10 pts</span> Correct outcome (win/draw/loss), wrong score</div>
+          <div class="score-rule"><span class="pts">+5 / +10 / +20</span> Streak bonus at 3, 5, or 10 gameweeks running with at least one correct outcome (highest tier only, not stacked)</div>
+          <div class="score-rule"><span class="pts">+15 pts each</span> Correct "highest scoring team" or "clean sheet team" gameweek extra guess</div>
+          <div class="score-rule"><span class="pts">+20 pts each</span> Correct "highest scoring game" or "lowest scoring game" gameweek extra guess</div>
+        </div>
       </div>
+      <div id="seasonPodium" class="season-podium-container"></div>
       <div id="communityGrid" class="community-grid"></div>
     </section>
 
@@ -141,11 +187,9 @@
         <h1>Leaderboard</h1>
         <p class="sub">Updated automatically after every gameweek.</p>
       </div>
-      <div class="table-scroll">
+      <div class="table-scroll" id="leaderboardScroll">
         <table class="leaderboard-table">
-          <thead>
-            <tr><th>Rank</th><th>Player</th><th>Match Pts</th><th>Table Pts</th><th>Extras Pts</th><th>Streak</th><th>Predicted</th><th>Correct</th><th>Perfect</th><th>Total</th></tr>
-          </thead>
+          <thead id="leaderboardHead"></thead>
           <tbody id="leaderboardBody"></tbody>
         </table>
       </div>
@@ -163,6 +207,10 @@
       </div>
       <input type="text" id="playerSearch" class="player-search" placeholder="Search by name…" />
       <div id="playersGrid" class="players-grid"></div>
+
+      <h2 class="section-title" style="margin-top:36px;">🔥 Highlights</h2>
+      <p class="sub">Auto-generated stat highlights from the group's predictions and results each gameweek.</p>
+      <div id="highlightsList" class="highlights-list"></div>
     </section>
 
     <section id="awards" class="panel">
@@ -203,14 +251,6 @@
       <div id="awardsScorersRef"><p class="empty-state">Loading…</p></div>
     </section>
 
-    <section id="highlights" class="panel">
-      <div class="panel-head">
-        <h1>Highlights</h1>
-        <p class="sub">Auto-generated stat highlights from the group's predictions and results each gameweek.</p>
-      </div>
-      <div id="highlightsList" class="highlights-list"></div>
-    </section>
-
     <section id="profile" class="panel">
       <div class="panel-head profile-head">
         <img id="profileAvatar" class="profile-avatar" alt="" style="display:none;" referrerpolicy="no-referrer">
@@ -220,6 +260,8 @@
         </div>
       </div>
       <div id="profileStats" class="profile-stats"></div>
+
+      <div id="profileHonors" class="profile-honors-section"></div>
 
       <h2 class="section-title">🥇 Badge Cabinet</h2>
       <div id="badgeGrid" class="badge-grid"></div>
@@ -234,9 +276,7 @@
 
   <div id="celebrate" class="celebrate"></div>
 
-  <footer class="footer">
-    <p>Scores sync automatically about once an hour. No admin required.</p>
-  </footer>
+
 
   <script type="module" src="js/firebase-config.js"></script>
   <script type="module" src="js/app.js"></script>
