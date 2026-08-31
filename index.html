@@ -69,8 +69,84 @@
         <div class="score-rule"><span class="pts">+5 / +10 / +20</span> Streak bonus at 3, 5, or 10 gameweeks running with at least one correct outcome (highest tier only, not stacked)</div>
         <div class="score-rule"><span class="pts">+15 pts each</span> Correct "highest scoring team" or "clean sheet team" gameweek extra guess</div>
         <div class="score-rule"><span class="pts">+20 pts each</span> Correct "highest scoring game" or "lowest scoring game" gameweek extra guess</div>
-        <div class="score-rule"><span class="pts">Up to 20 pts/team</span> League table prediction — <code>max(0, 20 − 2×|predicted position − actual position|)</code> per team, checked at gameweek 19 (worth 40%) and again at season end (worth 60%)</div>
         <div class="score-rule"><span class="pts">Honour system</span> Player-level picks (top scorer, Golden Boot, etc.) aren't auto-scored — the free data feed doesn't include individual player stats</div>
+      </div>
+
+      <div class="table-scoring-guide">
+        <div class="table-scoring-header">
+          <span class="pts-pill">🏆 League Table Scoring Matrix</span>
+          <span class="sub-text">Mid-Season Checkpoint (GW 19, 30% Weight) · Season End Final Standings (GW 38, 70% Weight)</span>
+        </div>
+
+        <div class="table-scoring-table-wrap">
+          <table class="table-rules-matrix">
+            <thead>
+              <tr>
+                <th>Zone</th>
+                <th>Positions</th>
+                <th>Mid-Season (30%)<br><span class="th-sub">Exact / ±1 / ±2</span></th>
+                <th>Final Season (70%)<br><span class="th-sub">Exact / ±1 / ±2</span></th>
+                <th>Max Possible</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="zone-badge zone-badge-champ">👑 Champion</span></td>
+                <td>Rank 1</td>
+                <td><strong>+120</strong> / +60 / +30</td>
+                <td><strong>+300</strong> / +120 / +60</td>
+                <td class="pts-highlight">420 pts</td>
+              </tr>
+              <tr>
+                <td><span class="zone-badge zone-badge-top4">⭐ Top 4 (UCL)</span></td>
+                <td>Ranks 2 – 4</td>
+                <td><strong>+100</strong> / +50 / +25</td>
+                <td><strong>+250</strong> / +100 / +50</td>
+                <td class="pts-highlight">350 pts / team</td>
+              </tr>
+              <tr>
+                <td><span class="zone-badge zone-badge-euro">🇪🇺 European Spots</span></td>
+                <td>Ranks 5 – 6</td>
+                <td><strong>+80</strong> / +40 / +20</td>
+                <td><strong>+200</strong> / +80 / +40</td>
+                <td class="pts-highlight">280 pts / team</td>
+              </tr>
+              <tr>
+                <td><span class="zone-badge zone-badge-drop">🔥 Relegation Battle</span></td>
+                <td>Ranks 18 – 20</td>
+                <td><strong>+100</strong> / +50 / +25</td>
+                <td><strong>+250</strong> / +100 / +50</td>
+                <td class="pts-highlight">350 pts / team</td>
+              </tr>
+              <tr>
+                <td><span class="zone-badge zone-badge-mid">🛡️ Mid-Table</span></td>
+                <td>Ranks 7 – 17</td>
+                <td><strong>+60</strong> / +30 / +15</td>
+                <td><strong>+150</strong> / +60 / +30</td>
+                <td class="pts-highlight">210 pts / team</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="zone-qualifiers-grid">
+          <div class="zone-qualifier-card">
+            <div class="zq-title">⭐ Top 4 Zone Qualifier</div>
+            <div class="zq-body"><strong>+50 pts Final</strong> (+20 Mid) if your predicted Top 4 team finishes in the Top 4, even if position is off by &gt;2.</div>
+          </div>
+          <div class="zone-qualifier-card">
+            <div class="zq-title">🔥 Relegation Zone Qualifier</div>
+            <div class="zq-body"><strong>+50 pts Final</strong> (+20 Mid) if your predicted Drop Zone team is relegated, even if position is off by &gt;2.</div>
+          </div>
+          <div class="zone-qualifier-card">
+            <div class="zq-title">🥇 Relegation 3-Team Sweep</div>
+            <div class="zq-body"><strong>+150 pts Final</strong> (+50 Mid) bonus for correctly placing all 3 relegated teams in the drop zone.</div>
+          </div>
+          <div class="zone-qualifier-card">
+            <div class="zq-title">👑 Top 4 Full Sweep</div>
+            <div class="zq-body"><strong>+150 pts Final</strong> (+60 Mid) bonus for correctly placing all 4 Champions League qualifiers.</div>
+          </div>
+        </div>
       </div>
 
       <h2 class="section-title">Who's playing</h2>
@@ -134,8 +210,85 @@
     <section id="table" class="panel">
       <div class="panel-head">
         <h1>Predict League Table</h1>
-        <p class="sub">Drag teams (or use the ▲▼ buttons) into the order you think they'll finish. Scored at mid-season and at the final whistle.</p>
-        <div class="score-rule" style="margin-top:10px;"><span class="pts">Up to 20 pts/team</span> League table prediction — <code>max(0, 20 − 2×|predicted position − actual position|)</code> per team, checked at gameweek 19 (worth 40%) and again at season end (worth 60%)</div>
+        <p class="sub">Drag teams (or use the ▲▼ buttons) into the order you think they'll finish. Scored at mid-season (GW 19, 30% weight) and at the final whistle (GW 38, 70% weight).</p>
+        
+        <div class="table-scoring-guide">
+          <div class="table-scoring-header">
+            <span class="pts-pill">🏆 League Table Scoring Matrix</span>
+            <span class="sub-text">Mid-Season Checkpoint (GW 19, 30% Weight) · Season End Final Standings (GW 38, 70% Weight)</span>
+          </div>
+
+          <div class="table-scoring-table-wrap">
+            <table class="table-rules-matrix">
+              <thead>
+                <tr>
+                  <th>Zone</th>
+                  <th>Positions</th>
+                  <th>Mid-Season (30%)<br><span class="th-sub">Exact / ±1 / ±2</span></th>
+                  <th>Final Season (70%)<br><span class="th-sub">Exact / ±1 / ±2</span></th>
+                  <th>Max Possible</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="zone-badge zone-badge-champ">👑 Champion</span></td>
+                  <td>Rank 1</td>
+                  <td><strong>+120</strong> / +60 / +30</td>
+                  <td><strong>+300</strong> / +120 / +60</td>
+                  <td class="pts-highlight">420 pts</td>
+                </tr>
+                <tr>
+                  <td><span class="zone-badge zone-badge-top4">⭐ Top 4 (UCL)</span></td>
+                  <td>Ranks 2 – 4</td>
+                  <td><strong>+100</strong> / +50 / +25</td>
+                  <td><strong>+250</strong> / +100 / +50</td>
+                  <td class="pts-highlight">350 pts / team</td>
+                </tr>
+                <tr>
+                  <td><span class="zone-badge zone-badge-euro">🇪🇺 European Spots</span></td>
+                  <td>Ranks 5 – 6</td>
+                  <td><strong>+80</strong> / +40 / +20</td>
+                  <td><strong>+200</strong> / +80 / +40</td>
+                  <td class="pts-highlight">280 pts / team</td>
+                </tr>
+                <tr>
+                  <td><span class="zone-badge zone-badge-drop">🔥 Relegation Battle</span></td>
+                  <td>Ranks 18 – 20</td>
+                  <td><strong>+100</strong> / +50 / +25</td>
+                  <td><strong>+250</strong> / +100 / +50</td>
+                  <td class="pts-highlight">350 pts / team</td>
+                </tr>
+                <tr>
+                  <td><span class="zone-badge zone-badge-mid">🛡️ Mid-Table</span></td>
+                  <td>Ranks 7 – 17</td>
+                  <td><strong>+60</strong> / +30 / +15</td>
+                  <td><strong>+150</strong> / +60 / +30</td>
+                  <td class="pts-highlight">210 pts / team</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="zone-qualifiers-grid">
+            <div class="zone-qualifier-card">
+              <div class="zq-title">⭐ Top 4 Zone Qualifier</div>
+              <div class="zq-body"><strong>+50 pts Final</strong> (+20 Mid) if your predicted Top 4 team finishes in the Top 4, even if position is off by &gt;2.</div>
+            </div>
+            <div class="zone-qualifier-card">
+              <div class="zq-title">🔥 Relegation Zone Qualifier</div>
+              <div class="zq-body"><strong>+50 pts Final</strong> (+20 Mid) if your predicted Drop Zone team is relegated, even if position is off by &gt;2.</div>
+            </div>
+            <div class="zone-qualifier-card">
+              <div class="zq-title">🥇 Relegation 3-Team Sweep</div>
+              <div class="zq-body"><strong>+150 pts Final</strong> (+50 Mid) bonus for correctly placing all 3 relegated teams in the drop zone.</div>
+            </div>
+            <div class="zone-qualifier-card">
+              <div class="zq-title">👑 Top 4 Full Sweep</div>
+              <div class="zq-body"><strong>+150 pts Final</strong> (+60 Mid) bonus for correctly placing all 4 Champions League qualifiers.</div>
+            </div>
+          </div>
+        </div>
+
         <div class="table-accuracy-legend">
           <span class="legend-item"><span class="matrix-tick-icon" style="animation:none;">✓</span> Exact Position</span>
           <span class="legend-item"><span class="matrix-dot dot-diff-1" style="animation:none;"></span> Off by 1 (±1)</span>
@@ -156,7 +309,7 @@
       <div class="panel-head">
         <h1>Community Table Predictions</h1>
         <p class="sub">Every player's predicted finishing position for every team, side by side. Rows are sorted by the current real league standings.</p>
-        <div class="score-rule" style="margin-top:10px;"><span class="pts">Up to 20 pts/team</span> League table prediction — <code>max(0, 20 − 2×|predicted position − actual position|)</code> per team, checked at gameweek 19 (worth 40%) and again at season end (worth 60%)</div>
+        <div class="score-rule" style="margin-top:10px;"><span class="pts">Zone-Weighted Table Scoring</span> Scored at Mid-Season (GW 19, 30% weight) & Final Standings (GW 38, 70% weight). 👑 <strong>Champion</strong> (up to 420 pts), ⭐ <strong>Top 4 & 🔥 Relegation</strong> (up to 350 pts/team), 🇪🇺 <strong>European</strong> (up to 280 pts/team), 🛡️ <strong>Mid-Table</strong> (up to 210 pts/team) + Zone Qualifier Bonuses.</div>
         <div class="table-accuracy-legend">
           <span class="legend-item"><span class="matrix-tick-icon" style="animation:none;">✓</span> Exact Position</span>
           <span class="legend-item"><span class="matrix-dot dot-diff-1" style="animation:none;"></span> Off by 1 (±1)</span>

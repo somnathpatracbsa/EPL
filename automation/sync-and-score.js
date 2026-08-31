@@ -9,15 +9,15 @@
  *   FOOTBALL_DATA_API_KEY      - free API key from football-data.org
  */
 
-import admin from 'firebase-admin';const SCORING = {
+import admin from 'firebase-admin';
+
+const SCORING = {
   EXACT_SCORE_POINTS: 25,
   CORRECT_OUTCOME_POINTS: 10,
   STREAK_TIERS: [ { min: 10, bonus: 20 }, { min: 5, bonus: 10 }, { min: 3, bonus: 5 } ], // highest tier reached applies — not cumulative
-  TABLE_MAX_POINTS_PER_TEAM: 20,
-  TABLE_POSITION_PENALTY: 2,
   MIDSEASON_GAMEWEEK: 19,
-  MIDSEASON_WEIGHT: 0.4,
-  FINAL_WEIGHT: 0.6,
+  MIDSEASON_WEIGHT: 0.3,
+  FINAL_WEIGHT: 0.7,
   EXTRA_TEAM_CORRECT_POINTS: 15, // top-scoring-team / clean-sheet-team guesses
   EXTRA_GAME_CORRECT_POINTS: 20  // highest-scoring-game / lowest-scoring-game guesses
 };
@@ -359,7 +359,69 @@ async function updateLeaderboard(fixturesInMemory) {
 }
 
 // ---------- 5. Table prediction checkpoint scoring (mid-season / final only) ----------
-async function scoreTablePredictions(weight) {
+function calculateTableScore(predictedTeams, actualPositions, checkpoint = 'final') {
+  const isMid = checkpoint === 'midseason';
+  let totalScore = 0;
+  let top4PredictedAndActual = 0;
+  let relegationPredictedAndActual = 0;
+
+  predictedTeams.forEach(entry => {
+    const actual = actualPositions[entry.team];
+    if (actual === undefined) return;
+    const pred = entry.predictedPosition;
+    const diff = Math.abs(pred - actual);
+
+    // Zone tiers:
+    // Champion (1st): Mid [120, 60, 30] | Final [300, 120, 60]
+    // Top 4 (2-4): Mid [100, 50, 25] | Final [250, 100, 50]
+    // European (5-6): Mid [80, 40, 20] | Final [200, 80, 40]
+    // Relegation (18-20): Mid [100, 50, 25] | Final [250, 100, 50]
+    // Mid-Table (7-17): Mid [60, 30, 15] | Final [150, 60, 30]
+    let exactPts = isMid ? 60 : 150;
+    let diff1Pts = isMid ? 30 : 60;
+    let diff2Pts = isMid ? 15 : 30;
+
+    if (actual === 1 || pred === 1) {
+      exactPts = isMid ? 120 : 300;
+      diff1Pts = isMid ? 60 : 120;
+      diff2Pts = isMid ? 30 : 60;
+    } else if ((actual >= 2 && actual <= 4) || (pred >= 2 && pred <= 4)) {
+      exactPts = isMid ? 100 : 250;
+      diff1Pts = isMid ? 50 : 100;
+      diff2Pts = isMid ? 25 : 50;
+    } else if ((actual >= 5 && actual <= 6) || (pred >= 5 && pred <= 6)) {
+      exactPts = isMid ? 80 : 200;
+      diff1Pts = isMid ? 40 : 80;
+      diff2Pts = isMid ? 20 : 40;
+    } else if ((actual >= 18 && actual <= 20) || (pred >= 18 && pred <= 20)) {
+      exactPts = isMid ? 100 : 250;
+      diff1Pts = isMid ? 50 : 100;
+      diff2Pts = isMid ? 25 : 50;
+    }
+
+    if (diff === 0) totalScore += exactPts;
+    else if (diff === 1) totalScore += diff1Pts;
+    else if (diff === 2) totalScore += diff2Pts;
+
+    // Zone Qualifier Bonus: If predicted and actual are in the same zone, but diff > 2:
+    if (pred <= 4 && actual <= 4) {
+      top4PredictedAndActual++;
+      if (diff > 2) totalScore += (isMid ? 20 : 50);
+    }
+    if (pred >= 18 && actual >= 18) {
+      relegationPredictedAndActual++;
+      if (diff > 2) totalScore += (isMid ? 20 : 50);
+    }
+  });
+
+  // Zone Sweep Bonuses
+  if (relegationPredictedAndActual === 3) totalScore += (isMid ? 50 : 150);
+  if (top4PredictedAndActual === 4) totalScore += (isMid ? 60 : 150);
+
+  return Math.round(totalScore);
+}
+
+async function scoreTablePredictions(checkpoint = 'final') {
   const data = await apiFetch(`/competitions/${COMPETITION}/standings`);
   if (!data || !data.standings) return null;
   const table = data.standings.find(s => s.type === 'TOTAL').table;
@@ -371,17 +433,11 @@ async function scoreTablePredictions(weight) {
   snap.forEach(d => {
     const t = d.data();
     if (!t.teams) return;
-    let total = 0;
-    t.teams.forEach(entry => {
-      const actual = actualPosition[entry.team];
-      if (actual === undefined) return;
-      total += Math.max(0, SCORING.TABLE_MAX_POINTS_PER_TEAM - SCORING.TABLE_POSITION_PENALTY * Math.abs(entry.predictedPosition - actual));
-    });
-    const key = weight === SCORING.MIDSEASON_WEIGHT ? 'midseason' : 'final';
-    batch.set(d.ref, { checkpointPoints: { [key]: total * weight } }, { merge: true });
+    const score = calculateTableScore(t.teams, actualPosition, checkpoint);
+    batch.set(d.ref, { checkpointPoints: { [checkpoint]: score } }, { merge: true });
   });
   await batch.commit();
-  console.log(`Table predictions scored at weight ${weight}.`);
+  console.log(`Table predictions scored for checkpoint: ${checkpoint}.`);
   return table;
 }
 
@@ -604,7 +660,7 @@ async function main() {
 
   let standingsTable = standingsTableLive;
   if (currentGW === SCORING.MIDSEASON_GAMEWEEK) {
-    try { standingsTable = await scoreTablePredictions(SCORING.MIDSEASON_WEIGHT); }
+    try { standingsTable = await scoreTablePredictions('midseason'); }
     catch (err) { console.error('scoreTablePredictions failed:', err.message); }
   }
 

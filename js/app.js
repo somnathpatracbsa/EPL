@@ -730,11 +730,11 @@ function renderTableList(teams, locked) {
     const actualZone = actualRank ? positionZoneClass(actualRank, teams.length) : '';
     li.innerHTML = `
       <span class="pos"></span>
-      <span class="team-name" style="flex:1;">${team}</span>
-      ${actualRank ? `<span class="actual-standing ${actualZone}" title="Current live EPL table standing"><span class="actual-label">Current:</span> #${actualRank}</span>` : ''}
+      <span class="team-name">${team}</span>
+      ${actualRank ? `<span class="actual-standing ${actualZone}" title="Current live EPL table standing"><span class="actual-label">Live:</span> #${actualRank}</span>` : ''}
       ${locked ? '' : `
-      <div class="reorder-controls" style="display: flex; align-items: center; gap: 6px;">
-        <input type="number" class="rank-input" min="1" max="${teams.length}" aria-label="Set rank for ${team}" style="width: 45px; text-align: center;">
+      <div class="reorder-controls">
+        <input type="number" class="rank-input" min="1" max="${teams.length}" aria-label="Set rank for ${team}">
         <div class="reorder-btns">
           <button type="button" class="reorder-btn up" aria-label="Move ${team} up">▲</button>
           <button type="button" class="reorder-btn down" aria-label="Move ${team} down">▼</button>
@@ -750,6 +750,62 @@ function renderTableList(teams, locked) {
     enableDirectRankInput(listEl); // Handles manual input updates
   }
   document.getElementById('saveTableBtn').style.display = locked ? 'none' : 'inline-block';
+}
+
+function calculateTableScore(predictedTeams, actualPositions, checkpoint = 'final') {
+  const isMid = checkpoint === 'midseason';
+  let totalScore = 0;
+  let top4PredictedAndActual = 0;
+  let relegationPredictedAndActual = 0;
+
+  predictedTeams.forEach(entry => {
+    const actual = actualPositions[entry.team];
+    if (actual === undefined) return;
+    const pred = entry.predictedPosition;
+    const diff = Math.abs(pred - actual);
+
+    let exactPts = isMid ? 60 : 150;
+    let diff1Pts = isMid ? 30 : 60;
+    let diff2Pts = isMid ? 15 : 30;
+
+    if (actual === 1 || pred === 1) {
+      exactPts = isMid ? 120 : 300;
+      diff1Pts = isMid ? 60 : 120;
+      diff2Pts = isMid ? 30 : 60;
+    } else if ((actual >= 2 && actual <= 4) || (pred >= 2 && pred <= 4)) {
+      exactPts = isMid ? 100 : 250;
+      diff1Pts = isMid ? 50 : 100;
+      diff2Pts = isMid ? 25 : 50;
+    } else if ((actual >= 5 && actual <= 6) || (pred >= 5 && pred <= 6)) {
+      exactPts = isMid ? 80 : 200;
+      diff1Pts = isMid ? 40 : 80;
+      diff2Pts = isMid ? 20 : 40;
+    } else if ((actual >= 18 && actual <= 20) || (pred >= 18 && pred <= 20)) {
+      exactPts = isMid ? 100 : 250;
+      diff1Pts = isMid ? 50 : 100;
+      diff2Pts = isMid ? 25 : 50;
+    }
+
+    if (diff === 0) totalScore += exactPts;
+    else if (diff === 1) totalScore += diff1Pts;
+    else if (diff === 2) totalScore += diff2Pts;
+
+    // Zone Qualifier Bonus: If predicted and actual are in the same zone, but diff > 2:
+    if (pred <= 4 && actual <= 4) {
+      top4PredictedAndActual++;
+      if (diff > 2) totalScore += (isMid ? 20 : 50);
+    }
+    if (pred >= 18 && actual >= 18) {
+      relegationPredictedAndActual++;
+      if (diff > 2) totalScore += (isMid ? 20 : 50);
+    }
+  });
+
+  // Zone Sweep Bonuses
+  if (relegationPredictedAndActual === 3) totalScore += (isMid ? 50 : 150);
+  if (top4PredictedAndActual === 4) totalScore += (isMid ? 60 : 150);
+
+  return Math.round(totalScore);
 }
 
 function renumberTableList() {
@@ -2015,11 +2071,14 @@ async function loadProfile() {
   const standingsOrder = cfg?.standingsOrder || [];
 
   if (tablePred && Array.isArray(tablePred.teams) && tablePred.teams.length > 0 && standingsOrder.length > 0) {
+    const actualPositions = {};
+    standingsOrder.forEach((t, i) => { actualPositions[t] = i + 1; });
+    currentTableLivePoints = calculateTableScore(tablePred.teams, actualPositions, 'final');
+
     tablePred.teams.forEach(t => {
-      const actualRank = standingsOrder.indexOf(t.team) + 1;
+      const actualRank = actualPositions[t.team];
       if (actualRank > 0) {
         const diff = Math.abs(t.predictedPosition - actualRank);
-        currentTableLivePoints += Math.max(0, 20 - 2 * diff);
         if (diff === 0) exactTableHits++;
         else if (diff <= 1) closeTableHits++;
       }
@@ -2230,7 +2289,7 @@ async function loadProfile() {
       if (myExtra.topScoringTeam) {
         if (isGwDone) {
           topPill = topTeams.includes(myExtra.topScoringTeam)
-            ? '<span class="extra-pill exact">✓ +20</span>'
+            ? '<span class="extra-pill exact">✓ +15</span>'
             : '<span class="extra-pill miss">✗ 0</span>';
         }
       }
@@ -2245,7 +2304,7 @@ async function loadProfile() {
       if (myExtra.cleanSheetTeam) {
         if (isGwDone) {
           csPill = csTeams.includes(myExtra.cleanSheetTeam)
-            ? '<span class="extra-pill exact">✓ +20</span>'
+            ? '<span class="extra-pill exact">✓ +15</span>'
             : '<span class="extra-pill miss">✗ 0</span>';
         }
       }

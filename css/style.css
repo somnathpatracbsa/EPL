@@ -377,19 +377,22 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   background: rgba(255,255,255,0.03);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   cursor: grab;
   font-weight: 600;
+  box-sizing: border-box;
+  width: 100%;
 }
 .table-list li .pos {
   font-family: var(--font-mono);
   color: var(--chalk);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  width: 24px;
+  width: 22px;
+  flex-shrink: 0;
 }
 .table-list li.dragging { opacity: 0.4; }
 
@@ -407,86 +410,111 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .table-list li.zone-mid     .team-name { color: var(--amber); }
 .table-list li.zone-bottom3 .pos,
 .table-list li.zone-bottom3 .team-name { color: var(--card-red); }
+
 /* Standard home (green) / away (orange) kit dots in the Predict Gameweek tab */
 .home-dot { background: var(--turf-bright); }
 .away-dot { background: var(--amber); }
 .actual-standing { font-family: var(--font-mono); font-size: 11px; margin-left: 6px; }
+.table-list .team-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .table-list .actual-standing {
-  font-size: 15px;
+  flex-shrink: 0;
+  font-size: 13px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  border-radius: 6px;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 5px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--line);
-  margin-left: 8px;
+  margin-left: auto;
 }
 .table-list .actual-standing .actual-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   color: var(--chalk-dim);
   letter-spacing: 0.5px;
   font-family: var(--font-body);
 }
-.reorder-btns { margin-left: auto; display: flex; flex-direction: column; gap: 2px; }
+.reorder-controls {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+.reorder-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
 .reorder-btn {
   background: rgba(255,255,255,0.08);
   border: none;
   color: var(--chalk);
-  width: 30px;
-  height: 22px;
-  border-radius: 4px;
+  width: 26px;
+  height: 18px;
+  border-radius: 3px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 9px;
   line-height: 1;
   touch-action: manipulation;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 .reorder-btn:hover { background: var(--amber); color: var(--pitch-night); }
 .reorder-btn:disabled { opacity: 0.25; cursor: default; background: rgba(255,255,255,0.08); color: var(--chalk); }
 
-
-
-/* Style for the new direct rank input */
+/* Style for direct rank input */
 .rank-input {
   background: var(--surface, #1e293b);
   color: var(--chalk, #f8fafc);
   border: 1px solid var(--border-color, #334155);
   border-radius: 4px;
-  padding: 4px;
-  font-size: 0.9rem;
+  padding: 3px 2px;
+  width: 38px !important;
+  height: 26px !important;
+  font-size: 12px !important;
   font-weight: bold;
+  text-align: center;
   outline: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
-
 .rank-input:focus {
   border-color: var(--accent, #3b82f6);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
-
-/* Hide standard HTML number input spinner arrows for a cleaner mobile layout */
 .rank-input::-webkit-outer-spin-button,
 .rank-input::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
-
 .rank-input[type=number] {
   -moz-appearance: textfield;
 }
 
+/* ---------- Full-width container for Table matrix and Leaderboard ---------- */
+.table-scroll {
+  overflow: auto;
+  max-height: 68vh;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  -webkit-overflow-scrolling: touch;
+}
 
-
-
-/* ---------- Community table matrix ---------- */
-.table-scroll { overflow: auto; max-height: 68vh; border: 1px solid var(--line); border-radius: var(--radius); }
-
-/* Table tab specifically fills the full viewport width instead of the standard ~920px content
-   column — the matrix genuinely benefits from the space (more player columns fit before needing
-   to scroll), whereas other tabs (forms, fixture cards) read better at the narrower width. */
-#allTables .table-scroll {
+#allTables .table-scroll,
+#leaderboard .table-scroll {
   width: 100vw;
   max-width: 100vw;
   position: relative;
@@ -499,8 +527,10 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   border-right: none;
   padding: 0 20px;
   box-sizing: border-box;
+  -webkit-overflow-scrolling: touch;
 }
-#allTables .matrix-table { min-width: 100%; }
+#allTables .matrix-table,
+#leaderboard .leaderboard-table { min-width: 100%; }
 .matrix-table { border-collapse: collapse; width: 100%; font-size: 12px; }
 .matrix-table th, .matrix-table td {
   padding: 8px 10px;
@@ -519,8 +549,37 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   z-index: 1;
   min-width: 140px;
 }
-.matrix-table th:first-child { z-index: 3; } /* top-left corner: sticky in both directions, needs to stay above everything */
+.matrix-table th:first-child { z-index: 3; } /* top-left corner */
 .matrix-table th.own-col { background: rgba(255, 182, 39, 0.18); color: var(--amber); }
+
+/* Scorers table in season awards — unfreeze rank column so it doesn't waste space */
+.scorers-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.scorers-table td:first-child,
+.scorers-table th:first-child {
+  position: static !important;
+  min-width: 32px !important;
+  max-width: 38px !important;
+  width: 32px !important;
+  text-align: center !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-right: none !important;
+  padding: 8px 4px !important;
+}
+.scorers-table td:nth-child(2),
+.scorers-table th:nth-child(2) {
+  text-align: left !important;
+  font-weight: 700;
+  color: var(--chalk);
+}
+.scorers-table td.stat-goals {
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
 .matrix-controls-bar {
   display: flex;
   align-items: center;
@@ -639,6 +698,125 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   display: inline-flex;
   align-items: center;
   margin-left: 8px;
+}
+
+/* ---------- Table Scoring Matrix Guide ---------- */
+.table-scoring-guide {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 12px 0 16px;
+}
+.table-scoring-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.table-scoring-header .pts-pill {
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: var(--amber);
+  letter-spacing: 0.5px;
+}
+.table-scoring-header .sub-text {
+  font-size: 11px;
+  color: var(--chalk-dim);
+  font-family: var(--font-mono);
+}
+.table-scoring-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.table-rules-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 520px;
+}
+.table-rules-matrix th, .table-rules-matrix td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.table-rules-matrix th {
+  background: rgba(0, 0, 0, 0.4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--chalk-dim);
+  letter-spacing: 0.5px;
+}
+.table-rules-matrix th .th-sub {
+  font-size: 9px;
+  color: var(--chalk-dim);
+  text-transform: none;
+  font-weight: normal;
+}
+.table-rules-matrix td {
+  color: var(--chalk);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.table-rules-matrix td strong {
+  color: var(--turf-bright);
+}
+.table-rules-matrix td.pts-highlight {
+  color: var(--amber);
+  font-weight: 700;
+}
+.zone-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.zone-badge-champ { background: rgba(255, 182, 39, 0.18); color: var(--amber); border: 1px solid rgba(255, 182, 39, 0.35); }
+.zone-badge-top4  { background: rgba(76, 191, 122, 0.18); color: var(--turf-bright); border: 1px solid rgba(76, 191, 122, 0.35); }
+.zone-badge-euro  { background: rgba(56, 189, 248, 0.18); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); }
+.zone-badge-drop  { background: rgba(230, 69, 69, 0.18); color: var(--card-red); border: 1px solid rgba(230, 69, 69, 0.35); }
+.zone-badge-mid   { background: rgba(255, 255, 255, 0.05); color: var(--chalk-dim); border: 1px solid var(--line); }
+
+.zone-qualifiers-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+@media (max-width: 768px) {
+  .zone-qualifiers-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .zone-qualifiers-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.zone-qualifier-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.zone-qualifier-card .zq-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--amber);
+  margin-bottom: 3px;
+}
+.zone-qualifier-card .zq-body {
+  font-size: 11px;
+  color: var(--chalk-dim);
+  line-height: 1.4;
+}
+.zone-qualifier-card .zq-body strong {
+  color: var(--chalk);
 }
 
 /* ---------- Gameweek grouping in Community Game Predictions ---------- */
@@ -1472,11 +1650,100 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   .fixture-main { flex-direction: column; align-items: flex-start; gap: 10px; }
   .score-input-group { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   .extras-grid { grid-template-columns: 1fr; }
-  /* leaderboard horizontal scroll handled by the .table-scroll wrapper — no override needed */
   .players-grid { grid-template-columns: repeat(2, 1fr); }
   .profile-stats { grid-template-columns: repeat(2, 1fr); }
   .admin-controls { flex-direction: column; }
   .admin-controls .btn { width: 100%; }
+
+  #allTables .table-scroll,
+  #leaderboard .table-scroll {
+    padding: 0 8px;
+  }
+  
+  /* Leaderboard: Compact Rank & Player, Unfreeze Total so moving columns are spacious */
+  .leaderboard-table .lb-rank {
+    width: 36px !important;
+    min-width: 36px !important;
+    max-width: 36px !important;
+    font-size: 11px !important;
+    padding: 8px 2px !important;
+    left: 0px !important;
+  }
+  .leaderboard-table .lb-player {
+    width: 100px !important;
+    min-width: 100px !important;
+    max-width: 100px !important;
+    left: 36px !important;
+    font-size: 11px !important;
+    padding: 8px 6px !important;
+    border-right: 2px solid rgba(255,255,255,0.12) !important;
+    box-shadow: 4px 0 8px rgba(0,0,0,0.6) !important;
+  }
+  .leaderboard-table .lb-total,
+  .leaderboard-table thead .lb-total {
+    position: static !important;
+    width: auto !important;
+    min-width: 50px !important;
+    border-right: none !important;
+    box-shadow: none !important;
+    font-size: 12px !important;
+    padding: 8px 6px !important;
+  }
+  .leaderboard-table thead .lb-rank { left: 0px !important; width: 36px !important; }
+  .leaderboard-table thead .lb-player { left: 36px !important; width: 100px !important; }
+  .leaderboard-table th, .leaderboard-table td {
+    padding: 8px 6px !important;
+    font-size: 11px !important;
+  }
+
+  /* Matrix Table (Table tab): Compact Team Column */
+  .matrix-table td:first-child, .matrix-table th:first-child {
+    min-width: 100px !important;
+    max-width: 100px !important;
+    width: 100px !important;
+    font-size: 11px !important;
+    padding: 8px 4px !important;
+    border-right: 2px solid rgba(255,255,255,0.12) !important;
+    box-shadow: 4px 0 8px rgba(0,0,0,0.6) !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .matrix-table th, .matrix-table td {
+    padding: 8px 4px !important;
+    min-width: 46px !important;
+    font-size: 11px !important;
+  }
+
+  /* Predict Table list on mobile */
+  .table-list li {
+    padding: 8px 8px;
+    gap: 6px;
+  }
+  .table-list li .pos {
+    width: 18px;
+    font-size: 12px;
+  }
+  .table-list li .team-name {
+    font-size: 12px;
+  }
+  .table-list .actual-standing {
+    font-size: 11px;
+    padding: 2px 4px;
+    margin-left: auto;
+  }
+  .table-list .actual-standing .actual-label {
+    display: none; /* Hide "Live:" / "Current:" on mobile to give maximum room */
+  }
+  .rank-input {
+    width: 32px !important;
+    height: 24px !important;
+    font-size: 11px !important;
+  }
+  .reorder-btn {
+    width: 22px;
+    height: 16px;
+    font-size: 8px;
+  }
 }
 
 @media (max-width: 400px) {
