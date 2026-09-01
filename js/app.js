@@ -85,21 +85,34 @@ const BADGE_ICONS = {
 })();
 
 // ---------- Tabs ----------
-document.getElementById('tabs').addEventListener('click', (e) => {
-  const btn = e.target.closest('.tab');
-  if (!btn) return;
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById(btn.dataset.tab).classList.add('active');
+const tabsContainer = document.getElementById('tabs');
+if (tabsContainer) {
+  tabsContainer.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab');
+    if (!btn) return;
+    const tabName = btn.dataset.tab;
+    if (!tabName) return;
 
-  if (btn.dataset.tab === 'allTables') loadAllTables();
-  if (btn.dataset.tab === 'community') loadCommunity();
-  if (btn.dataset.tab === 'leaderboard') { loadLeaderboard(); loadHighlights(); }
-  if (btn.dataset.tab === 'awards') { loadAwardsCommunity(); loadAwardsScorersRef(); }
-  if (btn.dataset.tab === 'profile') loadProfile();
-  if (btn.dataset.tab === 'home') loadHome();
-});
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    const targetPanel = document.getElementById(tabName);
+    if (targetPanel) targetPanel.classList.add('active');
+
+    try {
+      if (tabName === 'predict') { if (currentUser) loadFixtures(); }
+      else if (tabName === 'table') { loadTablePredictor(); }
+      else if (tabName === 'allTables') { loadAllTables(); }
+      else if (tabName === 'community') { loadCommunity(); }
+      else if (tabName === 'leaderboard') { loadLeaderboard(); loadHighlights(); }
+      else if (tabName === 'awards') { setupAwardsForm(); loadAwardsCommunity(); loadAwardsScorersRef(); }
+      else if (tabName === 'profile') { loadProfile(); }
+      else if (tabName === 'home') { loadHome(); }
+    } catch (err) {
+      console.error(`Error loading tab "${tabName}":`, err);
+    }
+  });
+}
 
 async function loadHome() {
   const list = document.getElementById('homePlayerList');
@@ -186,9 +199,25 @@ function matchStatusLine(fx, locked) {
 }
 
 // ---------- Auth ----------
-document.getElementById('signInBtn').addEventListener('click', () => {
-  signInWithPopup(auth, provider).catch(err => console.error('Sign-in failed:', err));
-});
+async function doSignIn() {
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (err) {
+    console.error('Sign-in failed:', err);
+    if (err.code === 'auth/unauthorized-domain') {
+      alert('Sign-in blocked: This domain is not authorized in Firebase. Add "localhost" under Firebase Console > Authentication > Settings > Authorized domains.');
+    } else if (err.code === 'auth/popup-blocked') {
+      alert('Sign-in popup was blocked by your browser. Please allow popups for this site.');
+    } else if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+      alert(`Sign-in error: ${err.message || err.code}`);
+    }
+  }
+}
+
+const initialSignInBtn = document.getElementById('signInBtn');
+if (initialSignInBtn) {
+  initialSignInBtn.addEventListener('click', doSignIn);
+}
 
 onAuthStateChanged(auth, async (user) => {
   currentUser = user;
@@ -198,18 +227,15 @@ onAuthStateChanged(auth, async (user) => {
       <span style="margin-right:12px; font-size:14px;">${user.displayName}${user.email === ADMIN_EMAIL ? ' <span style="color:var(--amber); font-family:var(--font-mono); font-size:10px;">ADMIN</span>' : ''}</span>
       <button id="signOutBtn" class="btn btn-secondary">Sign out</button>
     `;
-    document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
+    const signOutBtn = document.getElementById('signOutBtn');
+    if (signOutBtn) signOutBtn.addEventListener('click', () => signOut(auth));
     try {
       await ensureUserDoc(user);
     } catch (err) {
       console.error('ensureUserDoc error:', err);
-      // Non-fatal — still try to load the tabs below even if the profile write failed
     }
-    document.getElementById('adminLockControls').style.display = (user.email === ADMIN_EMAIL) ? 'flex' : 'none';
-    // These three don't depend on each other's results, so run them concurrently instead of
-    // one-after-another — this alone roughly halves time-to-interactive on slower connections.
-    // Each of the three now handles its own errors internally and renders a visible message on
-    // failure, so one broken load can no longer leave another tab silently stuck/blank.
+    const adminControls = document.getElementById('adminLockControls');
+    if (adminControls) adminControls.style.display = (user.email === ADMIN_EMAIL) ? 'flex' : 'none';
     try {
       await Promise.all([loadFixtures(), loadTablePredictor(), setupAwardsForm()]);
     } catch (err) {
@@ -217,9 +243,12 @@ onAuthStateChanged(auth, async (user) => {
     }
   } else {
     authArea.innerHTML = `<button id="signInBtn" class="btn btn-primary">Sign in with Google</button>`;
-    document.getElementById('signInBtn').addEventListener('click', () => signInWithPopup(auth, provider));
-    document.getElementById('fixtureList').innerHTML = `<p class="empty-state">Sign in to see this gameweek's fixtures.</p>`;
-    document.getElementById('adminLockControls').style.display = 'none';
+    const btn = document.getElementById('signInBtn');
+    if (btn) btn.addEventListener('click', doSignIn);
+    const fixtureList = document.getElementById('fixtureList');
+    if (fixtureList) fixtureList.innerHTML = `<p class="empty-state">Sign in to see this gameweek's fixtures.</p>`;
+    const adminControls = document.getElementById('adminLockControls');
+    if (adminControls) adminControls.style.display = 'none';
   }
   loadLeaderboard();
   loadHome();
@@ -264,17 +293,21 @@ async function getUsersMap() {
 
 async function loadConfig() {
   const snap = await getDoc(doc(db, 'config', 'current'));
-  const cfg = snap.exists() ? snap.data() : { currentGameweek: 1, tableLocked: false };
+  const cfg = snap.exists() ? snap.data() : { currentGameweek: 1, tableLocked: false, awardsLocked: false };
   currentGW = cfg.currentGameweek;
   standingsOrder = cfg.standingsOrder || null;
   document.getElementById('gwNumber').textContent = currentGW;
 
   const banner = document.getElementById('tableLockBanner');
-  if (cfg.tableLocked) {
-    banner.style.display = 'block';
-    banner.textContent = '🔒 Table predictions are currently locked by the admin.';
-  } else {
-    banner.style.display = 'none';
+  if (banner) {
+    banner.style.display = 'flex';
+    if (cfg.tableLocked) {
+      banner.className = 'lock-banner locked';
+      banner.innerHTML = '<span>🔒</span> <span><strong>Table Predictions Locked</strong> — locked by admin. Submissions and reordering are closed.</span>';
+    } else {
+      banner.className = 'lock-banner unlocked';
+      banner.innerHTML = '<span>🔓</span> <span><strong>Table Predictions Open</strong> — unlocked by admin. You can set and save your predicted table.</span>';
+    }
   }
   return cfg;
 }
@@ -1652,148 +1685,165 @@ async function loadCommunity(showAll = false) {
 async function loadLeaderboard() {
   const head = document.getElementById('leaderboardHead');
   const body = document.getElementById('leaderboardBody');
+  if (!head || !body) return;
   body.innerHTML = '<tr><td colspan="12" class="empty-state">Loading leaderboard…</td></tr>';
 
-  const [snap, fixtures, allPredsSnap, extrasSnap] = await Promise.all([
-    getDocs(query(collection(db, 'leaderboard'), orderBy('rank', 'asc'))),
-    getAllFixtures(),
-    getDocs(collection(db, 'predictions')),
-    getDocs(collection(db, 'gwExtraPredictions'))
-  ]);
+  try {
+    const [snap, fixtures, allPredsSnap, extrasSnap, seasonPredsSnap] = await Promise.all([
+      getDocs(query(collection(db, 'leaderboard'), orderBy('rank', 'asc'))).catch(() => ({ forEach: () => {}, docs: [] })),
+      getAllFixtures().catch(() => []),
+      getDocs(collection(db, 'predictions')).catch(() => ({ forEach: () => {}, docs: [] })),
+      getDocs(collection(db, 'gwExtraPredictions')).catch(() => ({ forEach: () => {}, docs: [] })),
+      getDocs(collection(db, 'seasonPredictions')).catch(() => ({ forEach: () => {}, docs: [] }))
+    ]);
 
-  const rows = [];
-  snap.forEach(d => rows.push({ uid: d.id, ...d.data() }));
-  const totalPlayers = rows.length;
+    const rows = [];
+    snap.forEach(d => rows.push({ uid: d.id, ...d.data() }));
+    const totalPlayers = rows.length;
 
-  const fixtureGW = {};
-  fixtures.forEach(f => { fixtureGW[f.id] = Number(f.gameweek); });
+    const fixtureGW = {};
+    fixtures.forEach(f => { fixtureGW[f.id] = Number(f.gameweek); });
 
-  // Dynamically compute/ensure gwPoints for all players across all scored predictions
-  const computedGwPoints = {};
-  allPredsSnap.forEach(d => {
-    const p = d.data();
-    if (p.scored && p.fixtureId && fixtureGW[p.fixtureId] && (p.points || 0) > 0) {
-      const gw = fixtureGW[p.fixtureId];
-      if (!computedGwPoints[p.uid]) computedGwPoints[p.uid] = {};
-      computedGwPoints[p.uid][gw] = (computedGwPoints[p.uid][gw] || 0) + (p.points || 0);
-    }
-  });
-  extrasSnap.forEach(d => {
-    const e = d.data();
-    if (e.scored && e.gameweek && (e.points || 0) > 0) {
-      const gw = Number(e.gameweek);
-      if (!computedGwPoints[e.uid]) computedGwPoints[e.uid] = {};
-      computedGwPoints[e.uid][gw] = (computedGwPoints[e.uid][gw] || 0) + (e.points || 0);
-    }
-  });
+    const awardPointsByUid = {};
+    seasonPredsSnap.forEach(d => {
+      const s = d.data();
+      if (s && s.points) awardPointsByUid[d.id] = s.points;
+    });
 
-  // Merge computedGwPoints into rows
-  rows.forEach(r => {
-    r.gwPoints = { ...(computedGwPoints[r.uid] || {}), ...(r.gwPoints || {}) };
-  });
+    // Dynamically compute/ensure gwPoints for all players across all scored predictions
+    const computedGwPoints = {};
+    allPredsSnap.forEach(d => {
+      const p = d.data();
+      if (p.scored && p.fixtureId && fixtureGW[p.fixtureId] && (p.points || 0) > 0) {
+        const gw = fixtureGW[p.fixtureId];
+        if (!computedGwPoints[p.uid]) computedGwPoints[p.uid] = {};
+        computedGwPoints[p.uid][gw] = (computedGwPoints[p.uid][gw] || 0) + (p.points || 0);
+      }
+    });
+    extrasSnap.forEach(d => {
+      const e = d.data();
+      if (e.scored && e.gameweek && (e.points || 0) > 0) {
+        const gw = Number(e.gameweek);
+        if (!computedGwPoints[e.uid]) computedGwPoints[e.uid] = {};
+        computedGwPoints[e.uid][gw] = (computedGwPoints[e.uid][gw] || 0) + (e.points || 0);
+      }
+    });
 
-  // Collect all scored gameweeks across all players
-  const gwSet = new Set();
-  rows.forEach(r => {
-    if (r.gwPoints) Object.keys(r.gwPoints).forEach(gw => gwSet.add(Number(gw)));
-  });
-  // Also check finished fixtures in case a GW finished
-  fixtures.forEach(f => {
-    if (f.status === 'FINISHED') gwSet.add(Number(f.gameweek));
-  });
-  const allGWs = [...gwSet].sort((a, b) => a - b);
+    // Merge computedGwPoints and awardPoints into rows
+    rows.forEach(r => {
+      r.gwPoints = { ...(computedGwPoints[r.uid] || {}), ...(r.gwPoints || {}) };
+      if (awardPointsByUid[r.uid] !== undefined) {
+        r.awardPoints = awardPointsByUid[r.uid];
+      }
+    });
 
-  // Compute Best Gameweek for each player
-  rows.forEach(r => {
-    if (!r.gwPoints || !Object.keys(r.gwPoints).length) {
-      r.bestGW = '–';
-    } else {
-      const entries = Object.entries(r.gwPoints).map(([gw, pts]) => ({ gw: Number(gw), pts: Number(pts) })).filter(e => e.pts > 0);
-      if (!entries.length) {
+    // Collect all scored gameweeks across all players
+    const gwSet = new Set();
+    rows.forEach(r => {
+      if (r.gwPoints) Object.keys(r.gwPoints).forEach(gw => gwSet.add(Number(gw)));
+    });
+    // Also check finished fixtures in case a GW finished
+    fixtures.forEach(f => {
+      if (f.status === 'FINISHED') gwSet.add(Number(f.gameweek));
+    });
+    const allGWs = [...gwSet].sort((a, b) => a - b);
+
+    // Compute Best Gameweek for each player
+    rows.forEach(r => {
+      if (!r.gwPoints || !Object.keys(r.gwPoints).length) {
         r.bestGW = '–';
       } else {
-        const maxPts = Math.max(...entries.map(e => e.pts));
-        const matching = entries.filter(e => e.pts === maxPts).sort((a, b) => a.gw - b.gw);
-        const best = matching[0];
-        r.bestGW = `GW ${best.gw} (${best.pts} pts)`;
+        const entries = Object.entries(r.gwPoints).map(([gw, pts]) => ({ gw: Number(gw), pts: Number(pts) })).filter(e => e.pts > 0);
+        if (!entries.length) {
+          r.bestGW = '–';
+        } else {
+          const maxPts = Math.max(...entries.map(e => e.pts));
+          const matching = entries.filter(e => e.pts === maxPts).sort((a, b) => a.gw - b.gw);
+          const best = matching[0];
+          r.bestGW = `GW ${best.gw} (${best.pts} pts)`;
+        }
       }
+    });
+
+    // For each gameweek, compute rank 1, 2, 3 scores across all players
+    const gwTopScores = {};
+    allGWs.forEach(gw => {
+      const scores = rows.map(r => r.gwPoints?.[gw] || 0).filter(s => s > 0);
+      const distinct = [...new Set(scores)].sort((a, b) => b - a);
+      gwTopScores[gw] = {
+        gold: distinct[0] || null,
+        silver: distinct[1] || null,
+        bronze: distinct[2] || null
+      };
+    });
+
+    // Build header row:
+    // Column order: Rank | Player | Total (frozen trio) | Best GW | Match Pts | Table Pts | Awards Pts | Extras | Streak | Predicted | Correct | Perfect | Accuracy | GW 1 | GW 2 | …
+    const staticHeaders = ['Best GW', 'Match Pts', 'Table Pts', 'Awards Pts', 'Extras', 'Streak', 'Predicted', 'Correct', 'Perfect', 'Accuracy'];
+    const gwHeaders = allGWs.map(gw => `GW ${gw}`);
+    head.innerHTML = `<tr>
+      <th class="lb-freeze lb-rank">Rank</th>
+      <th class="lb-freeze lb-player">Player</th>
+      <th class="lb-freeze lb-total">Total</th>
+      ${staticHeaders.map(h => `<th>${h}</th>`).join('')}
+      ${gwHeaders.map(h => `<th class="lb-gw-col">${h}</th>`).join('')}
+    </tr>`;
+
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="${3 + staticHeaders.length + allGWs.length}" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
+      return;
     }
-  });
 
-  // For each gameweek, compute rank 1, 2, 3 scores across all players
-  const gwTopScores = {};
-  allGWs.forEach(gw => {
-    const scores = rows.map(r => r.gwPoints?.[gw] || 0).filter(s => s > 0);
-    const distinct = [...new Set(scores)].sort((a, b) => b - a);
-    gwTopScores[gw] = {
-      gold: distinct[0] || null,
-      silver: distinct[1] || null,
-      bronze: distinct[2] || null
-    };
-  });
+    body.innerHTML = '';
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const zone = positionZoneClass(r.rank, totalPlayers);
+      if (zone) tr.classList.add(zone);
 
-  // Build header row:
-  // Column order: Rank | Player | Total (frozen trio) | Best GW | Match Pts | Table Pts | Extras | Streak | Predicted | Correct | Perfect | Accuracy | GW 1 | GW 2 | …
-  const staticHeaders = ['Best GW', 'Match Pts', 'Table Pts', 'Extras', 'Streak', 'Predicted', 'Correct', 'Perfect', 'Accuracy'];
-  const gwHeaders = allGWs.map(gw => `GW ${gw}`);
-  head.innerHTML = `<tr>
-    <th class="lb-freeze lb-rank">Rank</th>
-    <th class="lb-freeze lb-player">Player</th>
-    <th class="lb-freeze lb-total">Total</th>
-    ${staticHeaders.map(h => `<th>${h}</th>`).join('')}
-    ${gwHeaders.map(h => `<th class="lb-gw-col">${h}</th>`).join('')}
-  </tr>`;
+      const gwCells = allGWs.map(gw => {
+        const pts = r.gwPoints?.[gw];
+        if (pts === undefined || pts === null) return `<td class="lb-gw-col">–</td>`;
+        const tops = gwTopScores[gw];
+        let medalIcon = '';
+        if (pts > 0) {
+          if (pts === tops.gold) medalIcon = '<span class="lb-gw-medal" title="Star of Gameweek (1st)">🌟</span> ';
+          else if (pts === tops.silver) medalIcon = '<span class="lb-gw-medal" title="Challenger of Gameweek (2nd)">🥈</span> ';
+          else if (pts === tops.bronze) medalIcon = '<span class="lb-gw-medal" title="In-The-Run (3rd)">🥉</span> ';
+        }
+        return `<td class="lb-gw-col">${medalIcon}${pts}</td>`;
+      }).join('');
 
-  if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="${3 + staticHeaders.length + allGWs.length}" class="empty-state">Leaderboard populates after the first gameweek is scored.</td></tr>`;
-    return;
+      const accuracy = r.accuracyPct ?? (r.matchesPredicted > 0 ? Math.round(((r.correctPredictions || 0) / r.matchesPredicted) * 100) : 0);
+
+      let rankDisplay = `${r.rank}`;
+      if (r.rank === 1) rankDisplay = `<span title="1st Place · Leader">👑</span> 1`;
+      else if (r.rank === 2) rankDisplay = `<span title="2nd Place · Challenger">🥈</span> 2`;
+      else if (r.rank === 3) rankDisplay = `<span title="3rd Place · In-The-Run">🥉</span> 3`;
+
+      tr.innerHTML = `
+        <td class="lb-freeze lb-rank">${rankDisplay}</td>
+        <td class="lb-freeze lb-player" title="${r.displayName || r.email || r.uid}">${r.displayName || r.email || r.uid}</td>
+        <td class="lb-freeze lb-total">${r.totalPoints || 0}</td>
+        <td style="font-family:var(--font-mono); font-weight:700; color:var(--chalk); white-space:nowrap;">${r.bestGW}</td>
+        <td>${r.matchPoints || 0}</td>
+        <td>${r.tablePoints || 0}</td>
+        <td>${r.awardPoints || 0}</td>
+        <td>${r.extraPoints || 0}</td>
+        <td>${r.currentStreak || 0}</td>
+        <td>${r.matchesPredicted || 0}</td>
+        <td>${r.correctPredictions || 0}</td>
+        <td>${r.perfectPredictions || 0}</td>
+        <td>${accuracy}%</td>
+        ${gwCells}
+      `;
+      body.appendChild(tr);
+    });
+
+    await loadPlayers(rows); // same leaderboard data, no extra Firestore read for the player cards below
+  } catch (err) {
+    console.error('loadLeaderboard error:', err);
+    body.innerHTML = `<tr><td colspan="12" class="empty-state">⚠️ Couldn't load leaderboard. (${err.message || 'unknown error'})</td></tr>`;
   }
-
-  body.innerHTML = '';
-  rows.forEach(r => {
-    const tr = document.createElement('tr');
-    const zone = positionZoneClass(r.rank, totalPlayers);
-    if (zone) tr.classList.add(zone);
-
-    const gwCells = allGWs.map(gw => {
-      const pts = r.gwPoints?.[gw];
-      if (pts === undefined || pts === null) return `<td class="lb-gw-col">–</td>`;
-      const tops = gwTopScores[gw];
-      let medalIcon = '';
-      if (pts > 0) {
-        if (pts === tops.gold) medalIcon = '<span class="lb-gw-medal" title="Star of Gameweek (1st)">🌟</span> ';
-        else if (pts === tops.silver) medalIcon = '<span class="lb-gw-medal" title="Challenger of Gameweek (2nd)">🥈</span> ';
-        else if (pts === tops.bronze) medalIcon = '<span class="lb-gw-medal" title="In-The-Run (3rd)">🥉</span> ';
-      }
-      return `<td class="lb-gw-col">${medalIcon}${pts}</td>`;
-    }).join('');
-
-    const accuracy = r.accuracyPct ?? (r.matchesPredicted > 0 ? Math.round(((r.correctPredictions || 0) / r.matchesPredicted) * 100) : 0);
-
-    let rankDisplay = `${r.rank}`;
-    if (r.rank === 1) rankDisplay = `<span title="1st Place · Leader">👑</span> 1`;
-    else if (r.rank === 2) rankDisplay = `<span title="2nd Place · Challenger">🥈</span> 2`;
-    else if (r.rank === 3) rankDisplay = `<span title="3rd Place · In-The-Run">🥉</span> 3`;
-
-    tr.innerHTML = `
-      <td class="lb-freeze lb-rank">${rankDisplay}</td>
-      <td class="lb-freeze lb-player" title="${r.displayName || r.email || r.uid}">${r.displayName || r.email || r.uid}</td>
-      <td class="lb-freeze lb-total">${r.totalPoints || 0}</td>
-      <td style="font-family:var(--font-mono); font-weight:700; color:var(--chalk); white-space:nowrap;">${r.bestGW}</td>
-      <td>${r.matchPoints || 0}</td>
-      <td>${r.tablePoints || 0}</td>
-      <td>${r.extraPoints || 0}</td>
-      <td>${r.currentStreak || 0}</td>
-      <td>${r.matchesPredicted || 0}</td>
-      <td>${r.correctPredictions || 0}</td>
-      <td>${r.perfectPredictions || 0}</td>
-      <td>${accuracy}%</td>
-      ${gwCells}
-    `;
-    body.appendChild(tr);
-  });
-
-  await loadPlayers(rows); // same leaderboard data, no extra Firestore read for the player cards below
 }
 
 let warzonePlayersCache = null;
@@ -1822,6 +1872,7 @@ async function loadPlayers(leaderboardRows) {
           currentStreak: lb.currentStreak || 0,
           matchPoints: lb.matchPoints || 0,
           tablePoints: lb.tablePoints || 0,
+          awardPoints: lb.awardPoints || 0,
           extraPoints: lb.extraPoints || 0,
           badgeCount: badgeCountByUid[uid] || 0,
           exactCount: lb.exactCount || 0,
@@ -1856,70 +1907,379 @@ function renderPlayers(list) {
   }).join('');
 }
 
+const SEASON_AWARD_POINTS = {
+  goldenBoot: 250,
+  goldenGlove: 200,
+  managerOfYear: 200,
+  mostCleanSheetsTeam: 200,
+  mostRedCards: 150,
+  grandSlamBonus: 250
+};
+
+function normalizeAwardName(str) {
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim();
+}
+
+function isAwardMatch(prediction, winningAnswer) {
+  if (!prediction || !winningAnswer) return false;
+  const pNorm = normalizeAwardName(prediction);
+  if (!pNorm) return false;
+  const winners = winningAnswer.split(/[,;\/&]+/).map(w => normalizeAwardName(w)).filter(Boolean);
+  return winners.some(w => {
+    if (pNorm === w) return true;
+    if (pNorm.length >= 4 && w.includes(pNorm)) return true;
+    if (w.length >= 4 && pNorm.includes(w)) return true;
+    return false;
+  });
+}
+
+function syncChipsWithInput(chipsContainerId, inputId, optionsSet) {
+  const container = document.getElementById(chipsContainerId);
+  const input = document.getElementById(inputId);
+  if (!container || !input) return;
+
+  const getSelectedNames = () => {
+    return (input.value || '')
+      .split(/[,;]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  };
+
+  const updateChipStates = () => {
+    const selected = getSelectedNames().map(s => normalizeAwardName(s));
+    container.querySelectorAll('.admin-chip').forEach(chip => {
+      const val = chip.dataset.val;
+      const isSelected = selected.includes(normalizeAwardName(val));
+      chip.classList.toggle('active', isSelected);
+    });
+  };
+
+  container.innerHTML = [...optionsSet].sort().map(val => `
+    <span class="admin-chip" data-val="${val}">
+      <span>${val}</span>
+    </span>
+  `).join('');
+
+  container.onclick = (e) => {
+    const chip = e.target.closest('.admin-chip');
+    if (!chip) return;
+    const val = chip.dataset.val;
+    let selected = getSelectedNames();
+    const norm = normalizeAwardName(val);
+    const existingIdx = selected.findIndex(s => normalizeAwardName(s) === norm);
+    if (existingIdx >= 0) {
+      selected.splice(existingIdx, 1);
+    } else {
+      selected.push(val);
+    }
+    input.value = selected.join(', ');
+    updateChipStates();
+  };
+
+  input.oninput = () => {
+    updateChipStates();
+  };
+
+  updateChipStates();
+}
+
 // ---------- Season Awards tab ----------
 async function setupAwardsForm() {
   const sel = document.getElementById('awardCleanSheetTeam');
-  sel.innerHTML = PL_TEAMS_DEFAULT.map(t => `<option value="${t}">${t}</option>`).join('');
+  if (sel) {
+    sel.innerHTML = PL_TEAMS_DEFAULT.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
   if (!currentUser) return;
 
   const isAdmin = currentUser.email === ADMIN_EMAIL;
   const cfg = await loadConfig();
   const locked = cfg.awardsLocked && !isAdmin;
 
-  document.getElementById('awardsAdminLockControls').style.display = isAdmin ? 'flex' : 'none';
+  const adminLockControls = document.getElementById('awardsAdminLockControls');
+  if (adminLockControls) adminLockControls.style.display = isAdmin ? 'flex' : 'none';
+
   const banner = document.getElementById('awardsLockBanner');
-  if (cfg.awardsLocked) {
-    banner.style.display = 'block';
-    banner.textContent = '🔒 Season Award predictions are currently locked by the admin.';
-  } else {
-    banner.style.display = 'none';
+  if (banner) {
+    banner.style.display = 'flex';
+    if (cfg.awardsLocked) {
+      banner.className = 'lock-banner locked';
+      banner.innerHTML = '<span>🔒</span> <span><strong>Season Awards Locked</strong> — locked by admin. Submissions and changes are closed.</span>';
+    } else {
+      banner.className = 'lock-banner unlocked';
+      banner.innerHTML = '<span>🔓</span> <span><strong>Season Awards Open</strong> — unlocked by admin. You can submit or update your award picks.</span>';
+    }
   }
 
   const inputs = ['awardGoldenBoot', 'awardGoldenGlove', 'awardManager', 'awardRedCards', 'awardCleanSheetTeam'];
-  inputs.forEach(id => { document.getElementById(id).disabled = locked; });
-  document.getElementById('saveAwardsBtn').style.display = locked ? 'none' : 'inline-block';
+  inputs.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = locked;
+  });
+  const saveBtn = document.getElementById('saveAwardsBtn');
+  if (saveBtn) saveBtn.style.display = locked ? 'none' : 'inline-block';
 
+  // Load current user's prediction
   const ref = doc(db, 'seasonPredictions', currentUser.uid);
+  let userPickData = null;
   try {
     const snap = await getDoc(ref);
     if (snap.exists()) {
-      const d = snap.data();
-      document.getElementById('awardGoldenBoot').value = d.goldenBoot || '';
-      document.getElementById('awardGoldenGlove').value = d.goldenGlove || '';
-      document.getElementById('awardManager').value = d.managerOfYear || '';
-      document.getElementById('awardRedCards').value = d.mostRedCards || '';
-      sel.value = d.mostCleanSheetsTeam || PL_TEAMS_DEFAULT[0];
+      userPickData = snap.data();
+      const bootEl = document.getElementById('awardGoldenBoot');
+      if (bootEl) bootEl.value = userPickData.goldenBoot || '';
+      const gloveEl = document.getElementById('awardGoldenGlove');
+      if (gloveEl) gloveEl.value = userPickData.goldenGlove || '';
+      const mgrEl = document.getElementById('awardManager');
+      if (mgrEl) mgrEl.value = userPickData.managerOfYear || '';
+      const redEl = document.getElementById('awardRedCards');
+      if (redEl) redEl.value = userPickData.mostRedCards || '';
+      if (sel) sel.value = userPickData.mostCleanSheetsTeam || PL_TEAMS_DEFAULT[0];
     }
   } catch (err) {
     console.error('setupAwardsForm prefill error:', err);
-    // Non-fatal — the form still works for a fresh submission even if we couldn't preload past picks
   }
 
-  document.getElementById('lockAwardsBtn').onclick = async () => {
-    await setDoc(doc(db, 'config', 'current'), { awardsLocked: true }, { merge: true });
-    celebrate('Season Awards locked 🔒');
-    setupAwardsForm();
-  };
-  document.getElementById('unlockAwardsBtn').onclick = async () => {
-    await setDoc(doc(db, 'config', 'current'), { awardsLocked: false }, { merge: true });
-    celebrate('Season Awards unlocked 🔓');
-    setupAwardsForm();
+  // Display user pick results if graded
+  const winners = cfg.seasonAwardsWinners;
+  const isGraded = Boolean(cfg.seasonAwardsGraded && winners);
+
+  const displayResultTag = (elementId, userPick, winningAnswer, ptsReward) => {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    if (!isGraded || !winningAnswer) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'inline-flex';
+    const hit = isAwardMatch(userPick, winningAnswer);
+    if (hit) {
+      el.className = 'award-result-tag hit';
+      el.innerHTML = `✓ Correct (+${ptsReward} pts) · Official: ${winningAnswer}`;
+    } else {
+      el.className = 'award-result-tag miss';
+      el.innerHTML = `✗ 0 pts · Official: ${winningAnswer}`;
+    }
   };
 
-  document.getElementById('saveAwardsBtn').onclick = async () => {
-    await setDoc(ref, {
-      uid: currentUser.uid,
-      goldenBoot: document.getElementById('awardGoldenBoot').value.trim(),
-      goldenGlove: document.getElementById('awardGoldenGlove').value.trim(),
-      managerOfYear: document.getElementById('awardManager').value.trim(),
-      mostRedCards: document.getElementById('awardRedCards').value.trim(),
-      mostCleanSheetsTeam: sel.value,
-      submittedAt: serverTimestamp()
-    });
-    document.getElementById('awardsStatus').textContent = 'Saved ✓';
-    celebrate('Season picks locked in! 🎖️');
-    loadAwardsCommunity();
-  };
+  if (userPickData) {
+    displayResultTag('resultGoldenBoot', userPickData.goldenBoot, winners?.goldenBoot, SEASON_AWARD_POINTS.goldenBoot);
+    displayResultTag('resultGoldenGlove', userPickData.goldenGlove, winners?.goldenGlove, SEASON_AWARD_POINTS.goldenGlove);
+    displayResultTag('resultManager', userPickData.managerOfYear, winners?.managerOfYear, SEASON_AWARD_POINTS.managerOfYear);
+    displayResultTag('resultRedCards', userPickData.mostRedCards, winners?.mostRedCards, SEASON_AWARD_POINTS.mostRedCards);
+    displayResultTag('resultCleanSheetTeam', userPickData.mostCleanSheetsTeam, winners?.mostCleanSheetsTeam, SEASON_AWARD_POINTS.mostCleanSheetsTeam);
+  }
+
+  // Setup Admin Grading Suite
+  const gradingPanel = document.getElementById('awardsAdminGradingPanel');
+  if (gradingPanel) {
+    gradingPanel.style.display = isAdmin ? 'block' : 'none';
+    if (isAdmin) {
+      if (winners) {
+        const gbInput = document.getElementById('gradeGoldenBoot');
+        if (gbInput) gbInput.value = winners.goldenBoot || '';
+        const ggInput = document.getElementById('gradeGoldenGlove');
+        if (ggInput) ggInput.value = winners.goldenGlove || '';
+        const mgrInput = document.getElementById('gradeManager');
+        if (mgrInput) mgrInput.value = winners.managerOfYear || '';
+        const rcInput = document.getElementById('gradeRedCards');
+        if (rcInput) rcInput.value = winners.mostRedCards || '';
+        const csInput = document.getElementById('gradeCleanSheetTeam');
+        if (csInput) csInput.value = winners.mostCleanSheetsTeam || '';
+      }
+      const clearBtn = document.getElementById('clearAwardsGradingBtn');
+      if (clearBtn) clearBtn.style.display = isGraded ? 'inline-block' : 'none';
+
+      // Populate suggestion chips from submitted season predictions and PL teams
+      try {
+        const allSeasonPreds = await getDocs(collection(db, 'seasonPredictions'));
+        const picks = {
+          goldenBoot: new Set(),
+          goldenGlove: new Set(),
+          managerOfYear: new Set(),
+          mostRedCards: new Set(),
+          mostCleanSheetsTeam: new Set(PL_TEAMS_DEFAULT)
+        };
+        allSeasonPreds.forEach(d => {
+          const data = d.data();
+          if (data.goldenBoot) picks.goldenBoot.add(data.goldenBoot.trim());
+          if (data.goldenGlove) picks.goldenGlove.add(data.goldenGlove.trim());
+          if (data.managerOfYear) picks.managerOfYear.add(data.managerOfYear.trim());
+          if (data.mostRedCards) picks.mostRedCards.add(data.mostRedCards.trim());
+          if (data.mostCleanSheetsTeam) picks.mostCleanSheetsTeam.add(data.mostCleanSheetsTeam.trim());
+        });
+
+        syncChipsWithInput('chipsGoldenBoot', 'gradeGoldenBoot', picks.goldenBoot);
+        syncChipsWithInput('chipsGoldenGlove', 'gradeGoldenGlove', picks.goldenGlove);
+        syncChipsWithInput('chipsManager', 'gradeManager', picks.managerOfYear);
+        syncChipsWithInput('chipsRedCards', 'gradeRedCards', picks.mostRedCards);
+        syncChipsWithInput('chipsCleanSheetTeam', 'gradeCleanSheetTeam', picks.mostCleanSheetsTeam);
+      } catch (err) {
+        console.error('Error populating admin chips:', err);
+      }
+
+      // Grade & Award Points handler
+      const gradeBtn = document.getElementById('gradeAwardsBtn');
+      if (gradeBtn) {
+        gradeBtn.onclick = async () => {
+          const statusEl = document.getElementById('gradeAwardsStatus');
+          gradeBtn.disabled = true;
+          if (statusEl) statusEl.textContent = 'Grading predictions and awarding points…';
+
+          try {
+            const newWinners = {
+              goldenBoot: document.getElementById('gradeGoldenBoot')?.value.trim() || '',
+              goldenGlove: document.getElementById('gradeGoldenGlove')?.value.trim() || '',
+              managerOfYear: document.getElementById('gradeManager')?.value.trim() || '',
+              mostRedCards: document.getElementById('gradeRedCards')?.value.trim() || '',
+              mostCleanSheetsTeam: document.getElementById('gradeCleanSheetTeam')?.value.trim() || ''
+            };
+
+            const allSeasonPredsSnap = await getDocs(collection(db, 'seasonPredictions'));
+            let scoredUsers = 0;
+            const userAwardPoints = {};
+
+            for (const predDoc of allSeasonPredsSnap.docs) {
+              const d = predDoc.data();
+              const breakdown = {
+                goldenBoot: isAwardMatch(d.goldenBoot, newWinners.goldenBoot) ? SEASON_AWARD_POINTS.goldenBoot : 0,
+                goldenGlove: isAwardMatch(d.goldenGlove, newWinners.goldenGlove) ? SEASON_AWARD_POINTS.goldenGlove : 0,
+                managerOfYear: isAwardMatch(d.managerOfYear, newWinners.managerOfYear) ? SEASON_AWARD_POINTS.managerOfYear : 0,
+                mostRedCards: isAwardMatch(d.mostRedCards, newWinners.mostRedCards) ? SEASON_AWARD_POINTS.mostRedCards : 0,
+                mostCleanSheetsTeam: isAwardMatch(d.mostCleanSheetsTeam, newWinners.mostCleanSheetsTeam) ? SEASON_AWARD_POINTS.mostCleanSheetsTeam : 0
+              };
+              const correctCount = Object.values(breakdown).filter(v => v > 0).length;
+              const grandSlam = correctCount === 5 ? SEASON_AWARD_POINTS.grandSlamBonus : 0;
+              breakdown.grandSlam = grandSlam;
+              const totalPts = Object.values(breakdown).reduce((a, b) => a + b, 0);
+
+              userAwardPoints[predDoc.id] = totalPts;
+
+              await setDoc(predDoc.ref, {
+                graded: true,
+                points: totalPts,
+                breakdown,
+                gradedAt: serverTimestamp()
+              }, { merge: true });
+              scoredUsers++;
+            }
+
+            // Save official winners into config/current
+            await setDoc(doc(db, 'config', 'current'), {
+              seasonAwardsWinners: newWinners,
+              seasonAwardsGraded: true,
+              seasonAwardsGradedAt: serverTimestamp()
+            }, { merge: true });
+
+            // Update leaderboard documents in Firestore so totalPoints includes awardPoints
+            const lbSnap = await getDocs(collection(db, 'leaderboard'));
+            for (const lbDoc of lbSnap.docs) {
+              const lbData = lbDoc.data();
+              const awardPts = userAwardPoints[lbDoc.id] || 0;
+              const matchPts = lbData.matchPoints || 0;
+              const tablePts = lbData.tablePoints || 0;
+              const extraPts = lbData.extraPoints || 0;
+              const baseTotal = matchPts + tablePts + extraPts;
+              const streakBonus = Math.max(0, (lbData.totalPoints || 0) - (lbData.awardPoints || 0) - baseTotal);
+              const newTotal = baseTotal + awardPts + streakBonus;
+
+              await setDoc(lbDoc.ref, {
+                awardPoints: awardPts,
+                totalPoints: newTotal
+              }, { merge: true });
+            }
+
+            if (statusEl) statusEl.textContent = `Graded ${scoredUsers} players! 🏆`;
+            celebrate('Season Awards points successfully awarded! 🏆');
+            setupAwardsForm();
+            loadAwardsCommunity();
+          } catch (err) {
+            console.error('Error grading awards:', err);
+            if (statusEl) statusEl.textContent = `Error grading: ${err.message}`;
+          } finally {
+            gradeBtn.disabled = false;
+          }
+        };
+      }
+
+      // Clear grading handler
+      if (clearBtn) {
+        clearBtn.onclick = async () => {
+          if (!confirm('Are you sure you want to clear the official awards results and remove points?')) return;
+          clearBtn.disabled = true;
+          try {
+            await setDoc(doc(db, 'config', 'current'), {
+              seasonAwardsGraded: false,
+              seasonAwardsWinners: null
+            }, { merge: true });
+
+            const allSeasonPredsSnap = await getDocs(collection(db, 'seasonPredictions'));
+            for (const predDoc of allSeasonPredsSnap.docs) {
+              await setDoc(predDoc.ref, { graded: false, points: 0, breakdown: null }, { merge: true });
+            }
+
+            const lbSnap = await getDocs(collection(db, 'leaderboard'));
+            for (const lbDoc of lbSnap.docs) {
+              const lbData = lbDoc.data();
+              const oldAwardPts = lbData.awardPoints || 0;
+              await setDoc(lbDoc.ref, {
+                awardPoints: 0,
+                totalPoints: Math.max(0, (lbData.totalPoints || 0) - oldAwardPts)
+              }, { merge: true });
+            }
+
+            celebrate('Season Awards grading reset');
+            setupAwardsForm();
+            loadAwardsCommunity();
+          } catch (err) {
+            console.error('Error clearing awards grading:', err);
+          } finally {
+            clearBtn.disabled = false;
+          }
+        };
+      }
+    }
+  }
+
+  const lockAwardsBtn = document.getElementById('lockAwardsBtn');
+  if (lockAwardsBtn) {
+    lockAwardsBtn.onclick = async () => {
+      await setDoc(doc(db, 'config', 'current'), { awardsLocked: true }, { merge: true });
+      celebrate('Season Awards locked 🔒');
+      setupAwardsForm();
+    };
+  }
+  const unlockAwardsBtn = document.getElementById('unlockAwardsBtn');
+  if (unlockAwardsBtn) {
+    unlockAwardsBtn.onclick = async () => {
+      await setDoc(doc(db, 'config', 'current'), { awardsLocked: false }, { merge: true });
+      celebrate('Season Awards unlocked 🔓');
+      setupAwardsForm();
+    };
+  }
+
+  const saveAwardsBtn = document.getElementById('saveAwardsBtn');
+  if (saveAwardsBtn) {
+    saveAwardsBtn.onclick = async () => {
+      await setDoc(ref, {
+        uid: currentUser.uid,
+        goldenBoot: document.getElementById('awardGoldenBoot')?.value.trim() || '',
+        goldenGlove: document.getElementById('awardGoldenGlove')?.value.trim() || '',
+        managerOfYear: document.getElementById('awardManager')?.value.trim() || '',
+        mostRedCards: document.getElementById('awardRedCards')?.value.trim() || '',
+        mostCleanSheetsTeam: sel?.value || '',
+        submittedAt: serverTimestamp()
+      });
+      const statusEl = document.getElementById('awardsStatus');
+      if (statusEl) statusEl.textContent = 'Saved ✓';
+      celebrate('Season picks locked in! 🎖️');
+      loadAwardsCommunity();
+    };
+  }
 }
 
 async function loadAwardsScorersRef() {
@@ -2010,25 +2370,32 @@ async function loadProfile() {
     avatarEl.style.display = 'block';
   }
 
-  const [predsSnap, allFixtures, lbSnap, badgesSnap, allPredsSnap, extrasSnap, tablePredSnap, cfgSnap] = await Promise.all([
-    getDocs(query(collection(db, 'predictions'), where('uid', '==', currentUser.uid))),
-    getAllFixtures(),
-    getDoc(doc(db, 'leaderboard', currentUser.uid)),
-    getDoc(doc(db, 'badges', currentUser.uid)),
-    getDocs(collection(db, 'predictions')),
-    getDocs(collection(db, 'gwExtraPredictions')),
-    getDoc(doc(db, 'tablePredictions', currentUser.uid)),
-    getDoc(doc(db, 'config', 'current'))
-  ]);
+  let predsSnap, allFixtures, lbSnap, badgesSnap, allPredsSnap, extrasSnap, tablePredSnap, cfgSnap, seasonPredSnap;
+  try {
+    [predsSnap, allFixtures, lbSnap, badgesSnap, allPredsSnap, extrasSnap, tablePredSnap, cfgSnap, seasonPredSnap] = await Promise.all([
+      getDocs(query(collection(db, 'predictions'), where('uid', '==', currentUser.uid))).catch(() => ({ docs: [] })),
+      getAllFixtures().catch(() => []),
+      getDoc(doc(db, 'leaderboard', currentUser.uid)).catch(() => ({ exists: () => false })),
+      getDoc(doc(db, 'badges', currentUser.uid)).catch(() => ({ exists: () => false })),
+      getDocs(collection(db, 'predictions')).catch(() => ({ docs: [], forEach: () => {} })),
+      getDocs(collection(db, 'gwExtraPredictions')).catch(() => ({ docs: [], forEach: () => {} })),
+      getDoc(doc(db, 'tablePredictions', currentUser.uid)).catch(() => ({ exists: () => false })),
+      getDoc(doc(db, 'config', 'current')).catch(() => ({ exists: () => false })),
+      getDoc(doc(db, 'seasonPredictions', currentUser.uid)).catch(() => ({ exists: () => false }))
+    ]);
+  } catch (err) {
+    console.error('loadProfile data fetch error:', err);
+    return;
+  }
   const fixturesById = {};
   const fixturesByGW = {};
-  allFixtures.forEach(f => {
+  (allFixtures || []).forEach(f => {
     fixturesById[f.id] = f;
     if (!fixturesByGW[f.gameweek]) fixturesByGW[f.gameweek] = [];
     fixturesByGW[f.gameweek].push(f);
   });
 
-  const preds = predsSnap.docs.map(d => d.data()).sort((a, b) => {
+  const preds = (predsSnap?.docs || []).map(d => d.data()).sort((a, b) => {
     const fa = fixturesById[a.fixtureId], fb = fixturesById[b.fixtureId];
     return new Date(fb?.kickoffUTC || 0) - new Date(fa?.kickoffUTC || 0);
   });
@@ -2037,8 +2404,9 @@ async function loadProfile() {
   const exactCount = scoredPreds.filter(p => p.points === 25).length;
   const outcomeCount = scoredPreds.filter(p => p.points === 10).length;
   const accuracy = scoredPreds.length ? Math.round(((exactCount + outcomeCount) / scoredPreds.length) * 100) : 0;
-  const lb = lbSnap.exists() ? lbSnap.data() : {};
-  const cfg = cfgSnap.exists() ? cfgSnap.data() : {};
+  const lb = (lbSnap && typeof lbSnap.exists === 'function' && lbSnap.exists()) ? lbSnap.data() : {};
+  const cfg = (cfgSnap && typeof cfgSnap.exists === 'function' && cfgSnap.exists()) ? cfgSnap.data() : {};
+  const seasonPredData = (seasonPredSnap && typeof seasonPredSnap.exists === 'function' && seasonPredSnap.exists()) ? seasonPredSnap.data() : null;
 
   // Process user's extras
   const myExtras = extrasSnap.docs.map(d => d.data()).filter(e => e.uid === currentUser.uid);
@@ -2119,6 +2487,8 @@ async function loadProfile() {
     });
   }
 
+  const awardPtsVal = seasonPredData?.points || lb.awardPoints || 0;
+
   document.getElementById('profileStats').innerHTML = `
     <div class="profile-stat-card"><div class="value">${lb.totalPoints || 0}</div><div class="label">Total Points</div></div>
     <div class="profile-stat-card"><div class="value">${lb.rank ? '#' + lb.rank : '—'}</div><div class="label">Current Rank</div></div>
@@ -2126,6 +2496,7 @@ async function loadProfile() {
     <div class="profile-stat-card"><div class="value">${accuracy}%</div><div class="label">Match Accuracy</div></div>
     <div class="profile-stat-card"><div class="value">${totalExtrasPoints} pts</div><div class="label">Extras (${myExtrasPicksHit}/${myExtrasPicksTotal || 0} hit)</div></div>
     <div class="profile-stat-card"><div class="value">${tablePred ? currentTableLivePoints + ' pts' : '–'}</div><div class="label">Table Live Score (${exactTableHits}/20 exact, ${closeTableHits} ±1)</div></div>
+    <div class="profile-stat-card"><div class="value">${seasonPredData ? awardPtsVal + ' pts' : '–'}</div><div class="label">Season Awards (${seasonPredData?.graded ? 'Graded ✓' : 'Pending season end'})</div></div>
     <div class="profile-stat-card"><div class="value">${lb.currentStreak || 0}</div><div class="label">Current Streak</div></div>
   `;
 

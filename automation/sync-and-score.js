@@ -271,13 +271,20 @@ async function scoreGwExtras(allFixtures) {
 
 // ---------- 4. Rebuild leaderboard ----------
 async function updateLeaderboard(fixturesInMemory) {
-  const [usersSnap, predsSnap, tablePredsSnap, extrasSnap] = await Promise.all([
+  const [usersSnap, predsSnap, tablePredsSnap, extrasSnap, seasonPredsSnap] = await Promise.all([
     db.collection('users').get(), db.collection('predictions').get(),
-    db.collection('tablePredictions').get(), db.collection('gwExtraPredictions').get()
+    db.collection('tablePredictions').get(), db.collection('gwExtraPredictions').get(),
+    db.collection('seasonPredictions').get()
   ]);
 
   const fixtureGW = {};
   fixturesInMemory.forEach(f => { fixtureGW[f.id] = f.gameweek; });
+
+  const awardPoints = {};
+  seasonPredsSnap.forEach(d => {
+    const s = d.data();
+    if (s && s.points) awardPoints[d.id] = s.points;
+  });
 
   const userPoints = {}, userGWHit = {}, userExtraPoints = {}, userGWPoints = {};
   const userExactCount = {}, userScoredCount = {}, userOutcomeCount = {}, userTotalCount = {};
@@ -328,6 +335,7 @@ async function updateLeaderboard(fixturesInMemory) {
     const matchPts = userPoints[d.id] || 0;
     const tablePts = tablePoints[d.id] || 0;
     const extraPts = userExtraPoints[d.id] || 0;
+    const awardPts = awardPoints[d.id] || 0;
     let streakBonus = 0;
     const currentStreak = userStreaks[d.id] || 0;
     const tier = SCORING.STREAK_TIERS.find(t => currentStreak >= t.min); // tiers are ordered highest-first, so first match wins
@@ -338,13 +346,13 @@ async function updateLeaderboard(fixturesInMemory) {
     const accuracyPct = scoredCount ? Math.round(((exactCount + outcomeCount) / scoredCount) * 100) : 0;
     rows.push({
       uid: d.id, displayName: u.displayName, email: u.email,
-      matchPoints: matchPts, tablePoints: tablePts, extraPoints: extraPts,
+      matchPoints: matchPts, tablePoints: tablePts, extraPoints: extraPts, awardPoints: awardPts,
       currentStreak: userStreaks[d.id] || 0,
       exactCount, accuracyPct,
       matchesPredicted: userTotalCount[d.id] || 0,
       correctPredictions: exactCount + outcomeCount,
       perfectPredictions: exactCount,
-      totalPoints: matchPts + tablePts + extraPts + streakBonus,
+      totalPoints: matchPts + tablePts + extraPts + awardPts + streakBonus,
       gwPoints: userGWPoints[d.id] || {}
     });
   });

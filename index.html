@@ -7,6 +7,24 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css" />
+<script>
+  window.addEventListener('error', function(e) {
+    console.error('Diagnostic error caught:', e.error || e.message);
+    const box = document.getElementById('debugErrorBox') || document.createElement('div');
+    box.id = 'debugErrorBox';
+    box.style = 'position:fixed;bottom:12px;left:12px;right:12px;background:#c92a2a;color:#fff;padding:12px 16px;border-radius:8px;font-family:monospace;font-size:12px;z-index:99999;box-shadow:0 6px 16px rgba(0,0,0,0.6);border:1px solid #ff8787;';
+    box.innerHTML = '<strong>⚠️ JavaScript Error:</strong> ' + (e.message || e) + '<br><span style="opacity:0.85;">' + (e.filename || '') + ':' + (e.lineno || '') + '</span>';
+    if (document.body) document.body.appendChild(box);
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    console.error('Unhandled Promise Rejection:', e.reason);
+    const box = document.getElementById('debugErrorBox') || document.createElement('div');
+    box.id = 'debugErrorBox';
+    box.style = 'position:fixed;bottom:12px;left:12px;right:12px;background:#c92a2a;color:#fff;padding:12px 16px;border-radius:8px;font-family:monospace;font-size:12px;z-index:99999;box-shadow:0 6px 16px rgba(0,0,0,0.6);border:1px solid #ff8787;';
+    box.innerHTML = '<strong>⚠️ Promise Error:</strong> ' + (e.reason?.message || e.reason || 'Unknown error');
+    if (document.body) document.body.appendChild(box);
+  });
+</script>
 </head>
 <body>
 
@@ -78,7 +96,7 @@
             <div class="score-rule"><span class="pts">+5 / +10 / +20</span> Streak bonus at 3, 5, or 10 gameweeks running with at least one correct outcome (highest tier only, not stacked)</div>
             <div class="score-rule"><span class="pts">+15 pts each</span> Correct "highest scoring team" or "clean sheet team" gameweek extra guess</div>
             <div class="score-rule"><span class="pts">+20 pts each</span> Correct "highest scoring game" or "lowest scoring game" gameweek extra guess</div>
-            <div class="score-rule"><span class="pts">Honour system</span> Player-level picks (top scorer, Golden Boot, etc.) aren't auto-scored — the free data feed doesn't include individual player stats</div>
+            <div class="score-rule"><span class="pts">🏆 Season Awards (~20% Weight)</span> 🥾 Golden Boot (+250), 🧤 Golden Glove (+200), 📋 Manager of Year (+200), 🛡️ Clean Sheets Team (+200), 🟥 Most Red Cards (+150) + 🌟 Grand Slam 5/5 Bonus (+250). Judged by Admin post-season.</div>
           </div>
 
           <div class="table-scoring-guide">
@@ -155,6 +173,21 @@
                 <div class="zq-title">👑 Top 4 Full Sweep</div>
                 <div class="zq-body"><strong>+150 pts Final</strong> (+60 Mid) bonus for correctly placing all 4 Champions League qualifiers.</div>
               </div>
+            </div>
+
+            <!-- Season Awards Rules in Homepage -->
+            <div class="table-scoring-header" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px;">
+              <span class="pts-pill">🎖️ Season Awards Points &amp; Multi-Winner Rules</span>
+              <span class="sub-text">Scored at season end based on official Premier League outcomes (~20% Weight of championship)</span>
+            </div>
+            <div class="home-scoring" style="margin: 10px 0 4px;">
+              <div class="score-rule"><span class="pts">+250 pts</span> 🥾 <strong>Golden Boot (Top Scorer)</strong> — Correctly predict the Premier League top goalscorer.</div>
+              <div class="score-rule"><span class="pts">+200 pts</span> 🧤 <strong>Golden Glove (Goalkeeper)</strong> — Correctly predict the goalkeeper with the most clean sheets.</div>
+              <div class="score-rule"><span class="pts">+200 pts</span> 📋 <strong>Manager of the Year</strong> — Correctly predict the official Premier League Manager of the Season.</div>
+              <div class="score-rule"><span class="pts">+200 pts</span> 🛡️ <strong>Most Clean Sheets (Team)</strong> — Correctly predict the team that records the most clean sheets.</div>
+              <div class="score-rule"><span class="pts">+150 pts</span> 🟥 <strong>Most Red Cards (Player)</strong> — Correctly predict the player receiving the most red cards.</div>
+              <div class="score-rule"><span class="pts">+250 pts</span> 🌟 <strong>Grand Slam Jackpot Bonus</strong> — Awarded if you correctly predict all 5 awards (1,250 pts max possible)!</div>
+              <div class="score-rule"><span class="pts">🤝 Tie &amp; Clashes Policy</span> If multiple players or teams tie for an award (e.g. shared Golden Boot / Golden Glove), predicting <strong>any</strong> official winner awards you full points.</div>
             </div>
           </div>
         </div>
@@ -428,28 +461,107 @@
     <section id="awards" class="panel">
       <div class="panel-head">
         <h1>Season Awards Predictions</h1>
-        <p class="sub">Bragging-rights category — free-text picks, judged manually at season end since red cards / detailed stats need a paid data feed.</p>
+        <p class="sub">Predict the individual and team season award winners. Scored at season end (~20% weight of total championship points).</p>
+        <details class="scoring-accordion">
+          <summary class="scoring-accordion-summary">
+            <span class="summary-left">
+              <span class="summary-icon">🎖️</span>
+              <span class="summary-title">Season Awards Points &amp; Grading Rules</span>
+            </span>
+            <span class="summary-badge">Tap to expand</span>
+            <span class="summary-arrow">▼</span>
+          </summary>
+          <div class="scoring-accordion-content">
+            <div class="home-scoring" style="margin: 10px 0 6px;">
+              <div class="score-rule"><span class="pts">+250 pts</span> 🥾 <strong>Golden Boot (Top Scorer)</strong> — Correct player prediction</div>
+              <div class="score-rule"><span class="pts">+200 pts</span> 🧤 <strong>Golden Glove (Goalkeeper)</strong> — Correct goalkeeper with most clean sheets</div>
+              <div class="score-rule"><span class="pts">+200 pts</span> 📋 <strong>Manager of the Year</strong> — Official Premier League Manager of the Season</div>
+              <div class="score-rule"><span class="pts">+200 pts</span> 🛡️ <strong>Most Clean Sheets (Team)</strong> — Team recording the highest clean sheets</div>
+              <div class="score-rule"><span class="pts">+150 pts</span> 🟥 <strong>Most Red Cards (Player)</strong> — Player receiving the most red cards</div>
+              <div class="score-rule"><span class="pts">+250 pts</span> 🌟 <strong>Grand Slam Bonus</strong> — Extra jackpot bonus if you correctly predict all 5 awards (1,250 pts total)!</div>
+              <div class="score-rule"><span class="pts">Grading</span> Judged and scored by the Admin post-season based on official Premier League outcomes.</div>
+            </div>
+          </div>
+        </details>
       </div>
       <div id="awardsLockBanner" class="lock-banner" style="display:none;"></div>
       <div id="awardsAdminLockControls" class="admin-controls" style="display:none;">
         <button id="lockAwardsBtn" class="btn btn-secondary">🔒 Lock predictions for everyone</button>
         <button id="unlockAwardsBtn" class="btn btn-secondary">🔓 Unlock predictions</button>
       </div>
+
+      <div id="awardsAdminGradingPanel" class="admin-grading-panel" style="display:none;">
+        <div class="admin-grading-header">
+          <div class="admin-grading-header-top">
+            <span class="admin-badge-tag">ADMIN ONLY</span>
+            <span class="admin-grading-title">👑 Season Awards Official Grading Suite</span>
+          </div>
+          <span class="admin-grading-sub">Click suggested player/team chips to select winner(s), or type comma-separated names. Multiple selections are supported in case of clashes or joint awards.</span>
+        </div>
+        <div class="admin-grading-grid">
+          <div class="admin-grade-item">
+            <label for="gradeGoldenBoot">🥾 Golden Boot Winner(s) (+250 pts)</label>
+            <div class="grade-input-wrap">
+              <input type="text" id="gradeGoldenBoot" placeholder="e.g. Erling Haaland, Mohamed Salah" />
+              <div id="chipsGoldenBoot" class="admin-chip-group"></div>
+            </div>
+          </div>
+          <div class="admin-grade-item">
+            <label for="gradeGoldenGlove">🧤 Golden Glove Winner(s) (+200 pts)</label>
+            <div class="grade-input-wrap">
+              <input type="text" id="gradeGoldenGlove" placeholder="e.g. David Raya" />
+              <div id="chipsGoldenGlove" class="admin-chip-group"></div>
+            </div>
+          </div>
+          <div class="admin-grade-item">
+            <label for="gradeManager">📋 Manager of the Year (+200 pts)</label>
+            <div class="grade-input-wrap">
+              <input type="text" id="gradeManager" placeholder="e.g. Pep Guardiola, Mikel Arteta" />
+              <div id="chipsManager" class="admin-chip-group"></div>
+            </div>
+          </div>
+          <div class="admin-grade-item">
+            <label for="gradeRedCards">🟥 Most Red Cards Player(s) (+150 pts)</label>
+            <div class="grade-input-wrap">
+              <input type="text" id="gradeRedCards" placeholder="e.g. Cristian Romero" />
+              <div id="chipsRedCards" class="admin-chip-group"></div>
+            </div>
+          </div>
+          <div class="admin-grade-item">
+            <label for="gradeCleanSheetTeam">🛡️ Most Clean Sheets Team(s) (+200 pts)</label>
+            <div class="grade-input-wrap">
+              <input type="text" id="gradeCleanSheetTeam" placeholder="e.g. Arsenal, Manchester City" />
+              <div id="chipsCleanSheetTeam" class="admin-chip-group"></div>
+            </div>
+          </div>
+        </div>
+        <div class="admin-grade-actions">
+          <button id="gradeAwardsBtn" class="btn btn-admin-grade">🏆 Grade &amp; Award Season Points</button>
+          <button id="clearAwardsGradingBtn" class="btn btn-admin-clear" style="display:none;">Clear Official Results</button>
+          <span id="gradeAwardsStatus" class="pred-status"></span>
+        </div>
+      </div>
+
       <div class="extras-grid">
-        <label>Golden Boot (top scorer)
+        <label><span>🥾 Golden Boot (top scorer) <span class="extra-reward">(+250 pts)</span></span>
           <input type="text" id="awardGoldenBoot" placeholder="Player name" />
+          <div id="resultGoldenBoot" class="award-result-tag" style="display:none;"></div>
         </label>
-        <label>Golden Glove (most clean sheets, keeper)
+        <label><span>🧤 Golden Glove (clean sheets, keeper) <span class="extra-reward">(+200 pts)</span></span>
           <input type="text" id="awardGoldenGlove" placeholder="Player name" />
+          <div id="resultGoldenGlove" class="award-result-tag" style="display:none;"></div>
         </label>
-        <label>Manager of the Year
+        <label><span>📋 Manager of the Year <span class="extra-reward">(+200 pts)</span></span>
           <input type="text" id="awardManager" placeholder="Manager name" />
+          <div id="resultManager" class="award-result-tag" style="display:none;"></div>
         </label>
-        <label>Most Red Cards (player)
+        <label><span>🟥 Most Red Cards (player) <span class="extra-reward">(+150 pts)</span></span>
           <input type="text" id="awardRedCards" placeholder="Player name" />
+          <div id="resultRedCards" class="award-result-tag" style="display:none;"></div>
         </label>
-        <label>Most Clean Sheets (team)
+        <label><span>🛡️ Most Clean Sheets (team) <span class="extra-reward">(+200 pts)</span></span>
           <select id="awardCleanSheetTeam"></select>
+          <div id="resultCleanSheetTeam" class="award-result-tag" style="display:none;"></div>
         </label>
       </div>
       <button id="saveAwardsBtn" class="btn btn-primary">Save My Predictions</button>
@@ -490,7 +602,6 @@
 
 
 
-  <script type="module" src="js/firebase-config.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

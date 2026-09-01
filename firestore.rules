@@ -25,7 +25,7 @@ service cloud.firestore {
 
     match /leaderboard/{uid} {
       allow read: if true;
-      allow write: if false;
+      allow write: if request.auth != null && request.auth.token.email == 'somnathpatracbsa@gmail.com';
     }
 
     match /badges/{uid} {
@@ -33,12 +33,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ---------- Config: read by everyone, written by automation OR the admin (for table/awards lock/unlock) ----------
+    // ---------- Config: read by everyone, written by automation OR the admin (for table/awards lock/unlock and season grading) ----------
     match /config/{doc} {
       allow read: if true;
       allow write: if request.auth != null
         && request.auth.token.email == 'somnathpatracbsa@gmail.com'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tableLocked', 'awardsLocked']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'tableLocked', 'awardsLocked', 'seasonAwardsWinners', 'seasonAwardsGraded', 'seasonAwardsGradedAt'
+        ]);
     }
 
     // ---------- Users ----------
@@ -52,7 +54,7 @@ service cloud.firestore {
     match /predictions/{predId} {
       allow read: if true;
       allow create, update: if request.auth != null
-        && request.resource.data.uid == request.auth.uid
+        && request.auth.uid == request.resource.data.uid
         && predId == request.auth.uid + '_' + request.resource.data.fixtureId
         && request.resource.data.points == 0
         && request.resource.data.scored == false;
@@ -63,7 +65,7 @@ service cloud.firestore {
     match /gwExtraPredictions/{docId} {
       allow read: if true;
       allow create, update: if request.auth != null
-        && request.resource.data.uid == request.auth.uid
+        && request.auth.uid == request.resource.data.uid
         && request.resource.data.points == 0
         && request.resource.data.scored == false;
       allow delete: if false;
@@ -76,19 +78,21 @@ service cloud.firestore {
         && !request.resource.data.keys().hasAny(['checkpointPoints'])
         && (
           get(/databases/$(database)/documents/config/current).data.tableLocked != true
-          || request.auth.token.email == 'somnathpatracbsa@gmail.com' // ⚠️ replace with your exact Google account email
+          || request.auth.token.email == 'somnathpatracbsa@gmail.com'
         );
       allow delete: if false;
     }
 
-    // ---------- Season award predictions (Golden Boot etc.): owner-only, blocked while admin has locked it ----------
+    // ---------- Season award predictions (Golden Boot etc.): owner-only when unlocked, or admin for grading ----------
     match /seasonPredictions/{uid} {
       allow read: if true;
-      allow create, update: if request.auth != null && request.auth.uid == uid
-        && (
+      allow create, update: if request.auth != null && (
+        (request.auth.uid == uid && (
           get(/databases/$(database)/documents/config/current).data.awardsLocked != true
           || request.auth.token.email == 'somnathpatracbsa@gmail.com'
-        );
+        ))
+        || request.auth.token.email == 'somnathpatracbsa@gmail.com'
+      );
       allow delete: if false;
     }
   }
