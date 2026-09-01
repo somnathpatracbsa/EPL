@@ -606,7 +606,34 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
 .player-th-content {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+}
+.col-arrow-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  color: var(--chalk);
+  width: 19px;
+  height: 19px;
+  border-radius: 3px;
+  font-size: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  touch-action: manipulation;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.col-arrow-btn:hover:not(:disabled) {
+  background: var(--amber);
+  color: var(--pitch-night);
+  border-color: var(--amber);
+}
+.col-arrow-btn:disabled {
+  opacity: 0.15;
+  cursor: default;
 }
 .player-col-name { white-space: nowrap; }
 .col-drag-handle {
@@ -700,6 +727,98 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   margin-left: 8px;
 }
 
+/* ---------- Collapsible Scoring Rules Accordion with Attention Pulse ---------- */
+@keyframes scoring-border-pulse {
+  0%, 100% {
+    border-color: rgba(255, 182, 39, 0.25);
+    box-shadow: 0 0 0 rgba(255, 182, 39, 0);
+  }
+  50% {
+    border-color: rgba(255, 182, 39, 0.85);
+    box-shadow: 0 0 12px rgba(255, 182, 39, 0.35), inset 0 0 6px rgba(255, 182, 39, 0.12);
+  }
+}
+
+@keyframes badge-attention-blink {
+  0%, 100% { opacity: 0.75; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); color: var(--amber); text-shadow: 0 0 4px rgba(255, 182, 39, 0.6); }
+}
+
+.scoring-accordion {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 10px 0 16px;
+  overflow: hidden;
+  transition: border-color 0.2s, background 0.2s;
+  animation: scoring-border-pulse 2.2s infinite ease-in-out;
+}
+.scoring-accordion[open] {
+  border-color: rgba(255, 182, 39, 0.5);
+  background: rgba(255, 255, 255, 0.04);
+  animation: none; /* Keep steady when already open */
+}
+.scoring-accordion-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--chalk);
+  list-style: none;
+}
+.scoring-accordion-summary::-webkit-details-marker {
+  display: none;
+}
+.scoring-accordion-summary .summary-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.scoring-accordion-summary .summary-title {
+  color: var(--amber);
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+.scoring-accordion-summary .summary-badge {
+  font-size: 11px;
+  color: var(--amber);
+  font-family: var(--font-mono);
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(255, 182, 39, 0.12);
+  border: 1px solid rgba(255, 182, 39, 0.35);
+  animation: badge-attention-blink 2.2s infinite ease-in-out;
+}
+.scoring-accordion-summary .summary-arrow {
+  font-size: 10px;
+  color: var(--amber);
+  transition: transform 0.2s ease;
+}
+.scoring-accordion[open] .scoring-accordion-summary .summary-arrow {
+  transform: rotate(180deg);
+}
+.scoring-accordion[open] .scoring-accordion-summary .summary-badge {
+  display: none;
+}
+.scoring-accordion-content {
+  padding: 0 14px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.scoring-accordion-content .home-scoring {
+  margin: 10px 0 0;
+}
+.scoring-accordion-content .table-scoring-guide {
+  margin: 10px 0 0;
+}
+
 /* ---------- Table Scoring Matrix Guide ---------- */
 .table-scoring-guide {
   background: rgba(255, 255, 255, 0.02);
@@ -730,10 +849,12 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   margin-bottom: 12px;
   border-radius: 6px;
   border: 1px solid var(--line);
+  -webkit-overflow-scrolling: touch;
 }
 .table-rules-matrix {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12px;
   min-width: 520px;
 }
@@ -741,9 +862,10 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   padding: 8px 12px;
   text-align: left;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
 }
 .table-rules-matrix th {
-  background: rgba(0, 0, 0, 0.4);
+  background-color: #141a26;
   font-family: var(--font-mono);
   font-size: 10px;
   text-transform: uppercase;
@@ -760,7 +882,25 @@ main { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
   color: var(--chalk);
   font-family: var(--font-mono);
   font-size: 11px;
+  background-color: #0f141d;
 }
+/* Freeze 1st column (Zone) */
+.table-rules-matrix th:first-child,
+.table-rules-matrix td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  border-right: 1px solid var(--line);
+  box-shadow: 3px 0 6px rgba(0, 0, 0, 0.4);
+}
+.table-rules-matrix th:first-child {
+  background-color: #141a26;
+  z-index: 3;
+}
+.table-rules-matrix td:first-child {
+  background-color: #0f141d;
+}
+
 .table-rules-matrix td strong {
   color: var(--turf-bright);
 }

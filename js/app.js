@@ -361,7 +361,6 @@ async function loadFixtures() {
           <input type="number" min="0" max="20" class="score-input home-score" value="${existing ? existing.predHome : ''}" ${locked ? 'disabled' : ''} />
           <span class="score-dash">–</span>
           <input type="number" min="0" max="20" class="score-input away-score" value="${existing ? existing.predAway : ''}" ${locked ? 'disabled' : ''} />
-          ${locked ? '' : '<button class="btn btn-primary save-pred-btn">Save</button>'}
           <span class="pred-status"></span>
         </div>
       </div>
@@ -370,11 +369,6 @@ async function loadFixtures() {
     `;
     if (!locked) {
       anyUnlocked = true;
-      const saveBtn = card.querySelector('.save-pred-btn');
-      saveBtn.addEventListener('click', async () => {
-        const ok = await savePredictionForCard(card, fx, predRef);
-        if (ok) celebrate('Prediction locked in! ⚽');
-      });
       currentGwFixtureCards.push({ card, fx, predRef });
     }
     list.appendChild(card);
@@ -1039,24 +1033,34 @@ async function loadAllTables() {
       return `<span class="form-chips">${formStr.split(',').map(r => `<span class="form-chip ${r.trim()}">${r.trim()}</span>`).join('')}</span>`;
     };
 
+    let showTeamStats = false;
+    try {
+      const savedStatsState = sessionStorage.getItem('matrix_show_team_stats');
+      if (savedStatsState !== null) showTeamStats = JSON.parse(savedStatsState);
+    } catch (e) {}
+
     function renderMatrix() {
       const scrollHint = `
         <div class="matrix-controls-bar">
-          <span class="matrix-hint-text">↔️ ${playerEntries.length} players — <strong>drag any player column header</strong> to compare side by side. Your column is highlighted in amber.</span>
+          <span class="matrix-hint-text">↔️ ${playerEntries.length} players — <strong>tap ◀ ▶ or drag</strong> header to reorder columns. Your column is highlighted in amber.</span>
           <div class="matrix-btn-group">
+            <button id="toggleTeamStatsBtn" class="btn btn-secondary" style="font-size:11px; padding:4px 8px;">${showTeamStats ? '📊 Hide Team Stats' : '📊 Show Team Stats'}</button>
             ${currentUser ? `<button id="pinMyColBtn" class="btn btn-secondary" style="font-size:11px; padding:4px 8px;">📌 Move Me First</button>` : ''}
             <button id="resetColOrderBtn" class="btn btn-secondary" style="font-size:11px; padding:4px 8px;">Reset Order</button>
           </div>
         </div>
       `;
 
+      const statsHeaders = showTeamStats ? '<th>Pts</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Form</th>' : '';
       const header = `<tr>
-        <th>Team</th><th>Pts</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Form</th>
-        ${playerEntries.map(p => `
-          <th class="player-col-th ${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}" draggable="true" data-uid="${p.uid}" title="Drag header to move column">
+        <th>Team</th>${statsHeaders}
+        ${playerEntries.map((p, idx) => `
+          <th class="player-col-th ${currentUser && p.uid === currentUser.uid ? 'own-col' : ''}" draggable="true" data-uid="${p.uid}" title="Drag or tap ◀ ▶ to reorder">
             <div class="player-th-content">
+              <button type="button" class="col-arrow-btn move-left" data-uid="${p.uid}" data-dir="-1" title="Move left" aria-label="Move left" ${idx === 0 ? 'disabled' : ''}>◀</button>
               ${avatarHTML(p.uid, users, '20px')}
               <span class="player-col-name">${p.name}</span>
+              <button type="button" class="col-arrow-btn move-right" data-uid="${p.uid}" data-dir="1" title="Move right" aria-label="Move right" ${idx === playerEntries.length - 1 ? 'disabled' : ''}>▶</button>
               <span class="col-drag-handle" title="Drag to reorder">⋮⋮</span>
             </div>
           </th>
@@ -1067,18 +1071,21 @@ async function loadAllTables() {
         const actualPos = idx + 1;
         const actualZone = positionZoneClass(actualPos, totalTeams);
         const s = getStatsFor(teamName);
-        return `
-        <tr>
-          <td>
-            <span class="team-name ${actualZone}">${teamName}</span>
-            <span class="actual-standing ${actualZone}">#${actualPos}</span>
-          </td>
+        const statsCells = showTeamStats ? `
           <td class="stat-col" style="font-weight:700; color:var(--chalk);">${s?.points ?? '–'}</td>
           <td class="stat-col">${s?.won ?? '–'}</td>
           <td class="stat-col">${s?.draw ?? '–'}</td>
           <td class="stat-col">${s?.lost ?? '–'}</td>
           <td class="stat-col">${s && s.goalDifference != null ? (s.goalDifference > 0 ? '+' : '') + s.goalDifference : '–'}</td>
           <td class="stat-col">${s ? formChips(s.form) : '–'}</td>
+        ` : '';
+        return `
+        <tr>
+          <td>
+            <span class="team-name ${actualZone}">${teamName}</span>
+            <span class="actual-standing ${actualZone}">#${actualPos}</span>
+          </td>
+          ${statsCells}
           ${playerEntries.map(p => {
             const predPos = p.positions[teamName];
             const zone = positionZoneClass(predPos, totalTeams);
@@ -1103,6 +1110,15 @@ async function loadAllTables() {
       grid.innerHTML = `${fallbackNotice}${scrollHint}<div class="table-scroll"><table class="matrix-table"><thead>${header}</thead><tbody>${rows}</tbody></table></div>`;
 
       // Helper action buttons
+      const toggleStatsBtn = document.getElementById('toggleTeamStatsBtn');
+      if (toggleStatsBtn) {
+        toggleStatsBtn.onclick = () => {
+          showTeamStats = !showTeamStats;
+          try { sessionStorage.setItem('matrix_show_team_stats', JSON.stringify(showTeamStats)); } catch (e) {}
+          renderMatrix();
+        };
+      }
+
       const pinBtn = document.getElementById('pinMyColBtn');
       if (pinBtn) {
         pinBtn.onclick = () => {
@@ -1124,6 +1140,24 @@ async function loadAllTables() {
           renderMatrix();
         };
       }
+
+      // Column shift buttons (◀ and ▶)
+      grid.querySelectorAll('.col-arrow-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const uid = btn.dataset.uid;
+          const dir = parseInt(btn.dataset.dir, 10);
+          const currIdx = playerEntries.findIndex(p => p.uid === uid);
+          if (currIdx === -1) return;
+          const targetIdx = currIdx + dir;
+          if (targetIdx < 0 || targetIdx >= playerEntries.length) return;
+
+          const [movedPlayer] = playerEntries.splice(currIdx, 1);
+          playerEntries.splice(targetIdx, 0, movedPlayer);
+          savePlayerOrder();
+          renderMatrix();
+        });
+      });
 
       enableMatrixColumnDrag(grid.querySelector('.matrix-table'), playerEntries, renderMatrix, savePlayerOrder);
     }
