@@ -882,11 +882,15 @@ function renumberTableList() {
 }
 
 function enableDirectRankInput(listEl) {
+  if (listEl._hasDirectRankInput) return;
+  listEl._hasDirectRankInput = true;
+
   listEl.addEventListener('change', (e) => {
     if (!e.target.classList.contains('rank-input')) return;
     
     const input = e.target;
     const li = input.closest('li');
+    if (!li) return;
     const total = listEl.children.length;
     let newRank = parseInt(input.value, 10);
 
@@ -914,21 +918,39 @@ function enableDirectRankInput(listEl) {
 }
 
 function enableButtonReorder(listEl) {
+  if (listEl._hasButtonReorder) return;
+  listEl._hasButtonReorder = true;
+
   listEl.addEventListener('click', (e) => {
     const btn = e.target.closest('.reorder-btn');
-    if (!btn) return;
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+
     const li = btn.closest('li');
-    if (btn.classList.contains('up') && li.previousElementSibling) {
-      listEl.insertBefore(li, li.previousElementSibling);
-    } else if (btn.classList.contains('down') && li.nextElementSibling) {
-      listEl.insertBefore(li.nextElementSibling, li);
+    if (!li) return;
+
+    if (btn.classList.contains('up')) {
+      const prev = li.previousElementSibling;
+      if (prev) {
+        listEl.insertBefore(li, prev);
+        renumberTableList();
+      }
+    } else if (btn.classList.contains('down')) {
+      const next = li.nextElementSibling;
+      if (next) {
+        listEl.insertBefore(next, li);
+        renumberTableList();
+      }
     }
-    renumberTableList();
   });
 }
 
 function enableDragReorder(listEl) {
-  let dragged;
+  if (listEl._hasDragReorder) return;
+  listEl._hasDragReorder = true;
+
+  let dragged = null;
   listEl.addEventListener('dragstart', (e) => {
     const li = e.target.closest('li');
     if (!li) return;
@@ -938,6 +960,7 @@ function enableDragReorder(listEl) {
   listEl.addEventListener('dragend', (e) => {
     const li = e.target.closest('li');
     if (li) li.classList.remove('dragging');
+    dragged = null;
     renumberTableList();
   });
   listEl.addEventListener('dragover', (e) => {
