@@ -95,5 +95,12 @@ service cloud.firestore {
       );
       allow delete: if false;
     }
+
+    // ---------- Outbound Mail Queue (written on prediction submission, processed by backend) ----------
+    match /mailQueue/{mailId} {
+      allow read: if request.auth != null && request.auth.token.email == 'somnathpatracbsa@gmail.com';
+      allow create: if request.auth != null && request.resource.data.to == request.auth.token.email;
+      allow update, delete: if false;
+    }
   }
 }

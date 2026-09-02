@@ -167,10 +167,33 @@ function positionZoneClass(pos, total) {
 // FC" — this was the root cause of a scrambled Table tab (a failed match cascaded into every
 // other team's position shifting). orderTeams() below previously did an exact-string match with
 // no normalization at all, which likely never correctly matched any team against the API names.
-const NAME_ALIASES = { 'brighton': 'brightonhovealbion' };
+const NAME_ALIASES = {
+  'brighton': 'brightonhovealbion',
+  'brightonandhovealbion': 'brightonhovealbion',
+  'brightonhovealbion': 'brightonhovealbion',
+  'manchesterunited': 'manchesterunited',
+  'manunited': 'manchesterunited',
+  'manutd': 'manchesterunited',
+  'manchestercity': 'manchestercity',
+  'mancity': 'manchestercity',
+  'tottenham': 'tottenhamhotspur',
+  'spurs': 'tottenhamhotspur',
+  'nottingham': 'nottinghamforest',
+  'forest': 'nottinghamforest',
+  'wolves': 'wolverhamptonwanderers',
+  'wolverhampton': 'wolverhamptonwanderers'
+};
+
 function normalizeTeamName(name) {
-  let n = String(name || '').toLowerCase().replace(/fc|afc|&/g, '').replace(/[^a-z0-9]/g, '').trim();
+  let n = String(name || '').toLowerCase().replace(/fc|afc|&|and/g, '').replace(/[^a-z0-9]/g, '').trim();
   return NAME_ALIASES[n] || n;
+}
+
+function getCanonicalTeamName(rawName) {
+  if (!rawName) return '';
+  const norm = normalizeTeamName(rawName);
+  const matched = PL_TEAMS_DEFAULT.find(t => normalizeTeamName(t) === norm);
+  return matched || rawName.trim();
 }
 
 function getActualRank(teamName) {
@@ -417,28 +440,152 @@ async function loadFixtures() {
  }
 }
 
+async function sendSubmissionConfirmationEmail(gameweek, predictionsList, extras = null) {
+  if (!currentUser || !currentUser.email) return;
+
+  const rowsHtml = predictionsList.map(p => `
+    <tr style="border-bottom: 1px solid #24382e;">
+      <td style="padding: 10px 8px; font-weight: 600; text-align: right; color: #ffffff; width: 42%;">${p.homeTeam}</td>
+      <td style="padding: 10px 8px; font-family: monospace; font-size: 15px; font-weight: 700; color: #4cbf7a; text-align: center; width: 16%;">
+        ${p.homeScore !== null && p.awayScore !== null ? `${p.homeScore} – ${p.awayScore}` : '–'}
+      </td>
+      <td style="padding: 10px 8px; font-weight: 600; text-align: left; color: #ffffff; width: 42%;">${p.awayTeam}</td>
+    </tr>
+  `).join('');
+
+  let extrasHtml = '';
+  if (extras && (extras.topScoringTeam || extras.cleanSheetTeam || extras.highestScoringGame || extras.lowestScoringGame)) {
+    extrasHtml = `
+      <div style="background: #14241c; border-radius: 8px; padding: 16px; margin-top: 18px; border: 1px solid #1f382a;">
+        <div style="font-size: 12px; font-weight: 700; color: #ffb627; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;">⚡ Gameweek ${gameweek} Extras Locked In</div>
+        <div style="font-size: 13px; color: #eaf2ed; line-height: 1.8;">
+          ${extras.topScoringTeam ? `<div>🎯 <strong>Top Scoring Team:</strong> ${extras.topScoringTeam} <span style="color: #4cbf7a;">(+15 pts)</span></div>` : ''}
+          ${extras.cleanSheetTeam ? `<div>🛡️ <strong>Clean Sheet Team:</strong> ${extras.cleanSheetTeam} <span style="color: #4cbf7a;">(+15 pts)</span></div>` : ''}
+          ${extras.highestScoringGame ? `<div>🔥 <strong>Highest Scoring Game:</strong> ${extras.highestScoringGame} <span style="color: #4cbf7a;">(+20 pts)</span></div>` : ''}
+          ${extras.lowestScoringGame ? `<div>🔒 <strong>Lowest Scoring Game:</strong> ${extras.lowestScoringGame} <span style="color: #4cbf7a;">(+20 pts)</span></div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  const emailHtml = `
+    <div style="background-color: #0c1611; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #eaf2ed; padding: 28px 20px; max-width: 580px; margin: 0 auto; border-radius: 12px; border: 1px solid #1f382a;">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <span style="font-size: 32px;">✅</span>
+        <h1 style="color: #4cbf7a; font-size: 22px; margin: 8px 0 4px; letter-spacing: 0.5px;">Gameweek ${gameweek} Predictions Saved!</h1>
+        <p style="color: #8fa89b; font-size: 13px; margin: 0;">Premier League Prediction League · Submitted by ${currentUser.displayName || 'Champion'}</p>
+      </div>
+
+      <div style="background: #14241c; border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid #1f382a;">
+        <div style="font-size: 12px; font-weight: 700; color: #4cbf7a; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;">
+          📋 Your Match Scoreline Predictions
+        </div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <tbody>
+            ${rowsHtml || '<tr><td style="color:#8fa89b; text-align:center; padding:10px;">No match scorelines entered.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      ${extrasHtml}
+
+      <div style="text-align: center; margin-top: 24px;">
+        <a href="https://somnathpatracbsa.github.io/EPL/" style="display: inline-block; background: linear-gradient(135deg, #4cbf7a 0%, #2f8e54 100%); color: #0c1611; font-weight: 800; font-size: 14px; padding: 10px 24px; border-radius: 6px; text-decoration: none;">
+          🌐 View Predictions Portal
+        </a>
+      </div>
+
+      <div style="text-align: center; font-size: 11px; color: #6b8778; border-top: 1px solid #1f382a; padding-top: 14px; margin-top: 20px;">
+        Scorelines lock individually as each match kicks off. You can edit before kickoff anytime.
+      </div>
+    </div>
+  `;
+
+  try {
+    const cfg = await loadConfig();
+    if (cfg.resendApiKey) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cfg.resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: cfg.resendFromEmail || 'EPL Predictions <onboarding@resend.dev>',
+          to: [currentUser.email],
+          subject: `✅ Gameweek ${gameweek} Predictions Receipt`,
+          html: emailHtml
+        })
+      });
+    } else {
+      await addDoc(collection(db, 'mailQueue'), {
+        to: currentUser.email,
+        subject: `✅ Gameweek ${gameweek} Predictions Receipt`,
+        html: emailHtml,
+        createdAt: serverTimestamp(),
+        sent: false
+      });
+    }
+  } catch (err) {
+    console.error('Failed to dispatch confirmation email:', err);
+  }
+}
+
 document.getElementById('saveAllBtn').addEventListener('click', async () => {
   let count = 0;
+  const savedPicks = [];
   for (const { card, fx, predRef } of currentGwFixtureCards) {
     const ok = await savePredictionForCard(card, fx, predRef);
-    if (ok) count++;
+    if (ok) {
+      count++;
+      const h = card.querySelector('.home-score').value;
+      const a = card.querySelector('.away-score').value;
+      savedPicks.push({ homeTeam: fx.homeTeam, awayTeam: fx.awayTeam, homeScore: Number(h), awayScore: Number(a) });
+    }
   }
-  celebrate(count ? `${count} prediction${count === 1 ? '' : 's'} saved! ⚽` : 'Fill in at least one score first');
+  if (count) {
+    celebrate(`${count} prediction${count === 1 ? '' : 's'} saved! ⚽ Check your inbox for confirmation 📧`);
+    await sendSubmissionConfirmationEmail(currentGW, savedPicks);
+  } else {
+    celebrate('Fill in at least one score first');
+  }
 });
 
 document.getElementById('saveAllWithExtrasBtn').addEventListener('click', async () => {
   let count = 0;
+  const savedPicks = [];
   for (const { card, fx, predRef } of currentGwFixtureCards) {
     const ok = await savePredictionForCard(card, fx, predRef);
-    if (ok) count++;
+    if (ok) {
+      count++;
+      const h = card.querySelector('.home-score').value;
+      const a = card.querySelector('.away-score').value;
+      savedPicks.push({ homeTeam: fx.homeTeam, awayTeam: fx.awayTeam, homeScore: Number(h), awayScore: Number(a) });
+    }
   }
   const extrasSaved = await saveGwExtras();
+  const topSel = document.getElementById('topScoringTeam');
+  const csSel = document.getElementById('cleanSheetTeam');
+  const highGameSel = document.getElementById('highestScoringGame');
+  const lowGameSel = document.getElementById('lowestScoringGame');
+  const fixtures = await getAllFixtures();
+  const fxMap = {}; fixtures.forEach(f => { fxMap[f.id] = `${f.homeTeam} vs ${f.awayTeam}`; });
+
+  const extrasData = extrasSaved ? {
+    topScoringTeam: topSel?.value || null,
+    cleanSheetTeam: csSel?.value || null,
+    highestScoringGame: fxMap[highGameSel?.value] || highGameSel?.value || null,
+    lowestScoringGame: fxMap[lowGameSel?.value] || lowGameSel?.value || null
+  } : null;
+
   if (extrasSaved) {
-    const fixtures = await getAllFixtures();
     const gwFixtures = fixtures.filter(f => Number(f.gameweek) === Number(currentGW));
     await refreshExtrasCrowdStats(gwFixtures);
   }
-  celebrate(`${count} prediction${count === 1 ? '' : 's'}${extrasSaved ? ' + extras' : ''} saved! 🎯`);
+  celebrate(`${count} prediction${count === 1 ? '' : 's'}${extrasSaved ? ' + extras' : ''} saved! 🎯 Email confirmation sent 📧`);
+  if (count || extrasSaved) {
+    await sendSubmissionConfirmationEmail(currentGW, savedPicks, extrasData);
+  }
 });
 
 function computeCrowdStats(predictionDocs, fixture) {
@@ -597,8 +744,16 @@ async function setupGwExtras(fixtures) {
   saveBtn.onclick = async () => {
     const ok = await saveGwExtras();
     if (ok) {
-      celebrate('Extras locked in! 🎯');
+      const fxMap = {}; fixtures.forEach(f => { fxMap[f.id] = `${f.homeTeam} vs ${f.awayTeam}`; });
+      const extrasData = {
+        topScoringTeam: topSel?.value || null,
+        cleanSheetTeam: csSel?.value || null,
+        highestScoringGame: fxMap[highGameSel?.value] || highGameSel?.value || null,
+        lowestScoringGame: fxMap[lowGameSel?.value] || lowGameSel?.value || null
+      };
+      celebrate('Extras locked in! 🎯 Check your inbox for confirmation 📧');
       await refreshExtrasCrowdStats(fixtures);
+      await sendSubmissionConfirmationEmail(currentGW, [], extrasData);
     }
   };
 
@@ -715,9 +870,29 @@ async function loadTablePredictor() {
   // old save-bug) was passing this check and rendering zero rows — a permanently blank table
   // for that specific account, on every device, since it's a data issue not a client-side one.
   const hasValidTeams = snap.exists() && Array.isArray(snap.data().teams) && snap.data().teams.length > 0;
-  const teams = hasValidTeams
-    ? snap.data().teams.sort((a, b) => a.predictedPosition - b.predictedPosition).map(t => t.team)
-    : orderTeams(PL_TEAMS_DEFAULT);
+  let teams;
+  if (hasValidTeams) {
+    const rawList = snap.data().teams
+      .sort((a, b) => a.predictedPosition - b.predictedPosition)
+      .map(t => getCanonicalTeamName(t.team));
+    const seen = new Set();
+    const cleanList = [];
+    rawList.forEach(t => {
+      if (t && !seen.has(t)) {
+        seen.add(t);
+        cleanList.push(t);
+      }
+    });
+    PL_TEAMS_DEFAULT.forEach(t => {
+      if (!seen.has(t)) {
+        seen.add(t);
+        cleanList.push(t);
+      }
+    });
+    teams = cleanList;
+  } else {
+    teams = orderTeams(PL_TEAMS_DEFAULT);
+  }
 
   renderTableList(teams, locked);
 
@@ -785,8 +960,19 @@ function calculateTableScore(predictedTeams, actualPositions, checkpoint = 'fina
   let top4PredictedAndActual = 0;
   let relegationPredictedAndActual = 0;
 
+  // Build normalized lookup for actualPositions
+  const normActual = {};
+  if (actualPositions) {
+    Object.entries(actualPositions).forEach(([k, v]) => {
+      normActual[normalizeTeamName(k)] = v;
+    });
+  }
+
   predictedTeams.forEach(entry => {
-    const actual = actualPositions[entry.team];
+    let actual = actualPositions ? actualPositions[entry.team] : undefined;
+    if (actual === undefined) {
+      actual = normActual[normalizeTeamName(entry.team)];
+    }
     if (actual === undefined) return;
     const pred = entry.predictedPosition;
     const diff = Math.abs(pred - actual);
@@ -1015,7 +1201,7 @@ async function loadAllTables() {
     }
 
     const playerEntries = [];
-    const allTeams = new Set();
+    const canonicalTeams = new Set(PL_TEAMS_DEFAULT);
 
     tablesSnap.forEach(d => {
       const data = d.data();
@@ -1024,8 +1210,9 @@ async function loadAllTables() {
       const positions = {};
       data.teams.forEach(e => {
         if (e && e.team) {
-          positions[e.team] = e.predictedPosition;
-          allTeams.add(e.team);
+          const canonical = getCanonicalTeamName(e.team);
+          positions[canonical] = e.predictedPosition;
+          canonicalTeams.add(canonical);
         }
       });
 
@@ -1036,7 +1223,7 @@ async function loadAllTables() {
       });
     });
 
-    if (playerEntries.length === 0 || allTeams.size === 0) {
+    if (playerEntries.length === 0 || canonicalTeams.size === 0) {
       grid.innerHTML = '<p class="empty-state">No complete table predictions found.</p>';
       return;
     }
@@ -1072,8 +1259,8 @@ async function loadAllTables() {
     };
     const usingFallback = standingsOrderList.length === 0;
     const teamRows = usingFallback
-      ? [...allTeams].sort()
-      : [...allTeams].sort((a, b) => rankOf(a) - rankOf(b));
+      ? [...canonicalTeams].sort()
+      : [...canonicalTeams].sort((a, b) => rankOf(a) - rankOf(b));
     const totalTeams = teamRows.length;
 
     const fallbackNotice = usingFallback
@@ -2497,11 +2684,11 @@ async function loadProfile() {
 
   if (tablePred && Array.isArray(tablePred.teams) && tablePred.teams.length > 0 && standingsOrder.length > 0) {
     const actualPositions = {};
-    standingsOrder.forEach((t, i) => { actualPositions[t] = i + 1; });
+    standingsOrder.forEach((t, i) => { actualPositions[normalizeTeamName(t)] = i + 1; });
     currentTableLivePoints = calculateTableScore(tablePred.teams, actualPositions, 'final');
 
     tablePred.teams.forEach(t => {
-      const actualRank = actualPositions[t.team];
+      const actualRank = actualPositions[normalizeTeamName(t.team)];
       if (actualRank > 0) {
         const diff = Math.abs(t.predictedPosition - actualRank);
         if (diff === 0) exactTableHits++;

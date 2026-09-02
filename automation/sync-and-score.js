@@ -367,14 +367,47 @@ async function updateLeaderboard(fixturesInMemory) {
 }
 
 // ---------- 5. Table prediction checkpoint scoring (mid-season / final only) ----------
+const NAME_ALIASES = {
+  'brighton': 'brightonhovealbion',
+  'brightonandhovealbion': 'brightonhovealbion',
+  'brightonhovealbion': 'brightonhovealbion',
+  'manchesterunited': 'manchesterunited',
+  'manunited': 'manchesterunited',
+  'manutd': 'manchesterunited',
+  'manchestercity': 'manchestercity',
+  'mancity': 'manchestercity',
+  'tottenham': 'tottenhamhotspur',
+  'spurs': 'tottenhamhotspur',
+  'nottingham': 'nottinghamforest',
+  'forest': 'nottinghamforest',
+  'wolves': 'wolverhamptonwanderers',
+  'wolverhampton': 'wolverhamptonwanderers'
+};
+
+function normalizeTeamName(name) {
+  let n = String(name || '').toLowerCase().replace(/fc|afc|&|and/g, '').replace(/[^a-z0-9]/g, '').trim();
+  return NAME_ALIASES[n] || n;
+}
+
 function calculateTableScore(predictedTeams, actualPositions, checkpoint = 'final') {
   const isMid = checkpoint === 'midseason';
   let totalScore = 0;
   let top4PredictedAndActual = 0;
   let relegationPredictedAndActual = 0;
 
+  // Build normalized lookup for actualPositions
+  const normActual = {};
+  if (actualPositions) {
+    Object.entries(actualPositions).forEach(([k, v]) => {
+      normActual[normalizeTeamName(k)] = v;
+    });
+  }
+
   predictedTeams.forEach(entry => {
-    const actual = actualPositions[entry.team];
+    let actual = actualPositions ? actualPositions[entry.team] : undefined;
+    if (actual === undefined) {
+      actual = normActual[normalizeTeamName(entry.team)];
+    }
     if (actual === undefined) return;
     const pred = entry.predictedPosition;
     const diff = Math.abs(pred - actual);
@@ -607,6 +640,217 @@ async function generateHighlights(leaderboardRows, matches, standingsTable) {
   console.log(`Highlights generated: ${items.length} items.`);
 }
 
+// ---------- 7. Resend Email Notifications ----------
+const RESEND_API_URL = 'https://api.resend.com/emails';
+const DEFAULT_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'EPL Predictions <onboarding@resend.dev>';
+
+async function sendResendEmail({ to, subject, html, text }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.warn('RESEND_API_KEY not configured — skipping email dispatch to', to);
+    return null;
+  }
+  try {
+    const res = await fetch(RESEND_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: DEFAULT_FROM_EMAIL,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+        text: text || undefined
+      })
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      console.error(`Resend API error (${res.status}):`, result);
+      return null;
+    }
+    return result;
+  } catch (err) {
+    console.error('sendResendEmail network error:', err.message);
+    return null;
+  }
+}
+
+async function processMailQueue() {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return;
+  try {
+    const queueSnap = await db.collection('mailQueue').where('sent', '==', false).limit(30).get();
+    if (queueSnap.empty) return;
+
+    for (const doc of queueSnap.docs) {
+      const mail = doc.data();
+      const result = await sendResendEmail({
+        to: mail.to,
+        subject: mail.subject,
+        html: mail.html
+      });
+      if (result) {
+        await doc.ref.update({ sent: true, sentAt: admin.firestore.FieldValue.serverTimestamp() });
+      }
+      await sleep(250);
+    }
+    console.log(`Processed ${queueSnap.size} mail queue item(s).`);
+  } catch (err) {
+    console.error('processMailQueue error:', err.message);
+  }
+}
+
+async function checkAndSend24hGwReminders(fixturesInMemory) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return;
+
+  // Find upcoming unfinished fixtures
+  const upcomingFixtures = fixturesInMemory.filter(f => f.status !== 'FINISHED' && f.kickoffUTC);
+  if (!upcomingFixtures.length) return;
+
+  // Group by gameweek and find the lowest upcoming gameweek
+  const gws = [...new Set(upcomingFixtures.map(f => f.gameweek))].sort((a, b) => a - b);
+  const targetGW = gws[0];
+  const gwFixtures = upcomingFixtures.filter(f => f.gameweek === targetGW);
+  if (!gwFixtures.length) return;
+
+  // Find earliest kickoff in this GW
+  const firstKickoffMs = Math.min(...gwFixtures.map(f => new Date(f.kickoffUTC).getTime()));
+  const nowMs = Date.now();
+  const diffHours = (firstKickoffMs - nowMs) / (1000 * 60 * 60);
+
+  // Trigger window: between 0 and 24 hours before first kickoff
+  if (diffHours <= 0 || diffHours > 24) return;
+
+  // Check if reminder was already sent for this GW
+  const configDoc = await db.collection('config').doc('current').get();
+  const configData = configDoc.exists ? configDoc.data() : {};
+  const remindersSent = configData.gwRemindersSent || {};
+  if (remindersSent[targetGW]) {
+    return; // Already sent for this GW
+  }
+
+  console.log(`Gameweek ${targetGW} kicks off in ${diffHours.toFixed(1)} hours — checking missing predictions for reminders...`);
+
+  // Query all registered users
+  const usersSnap = await db.collection('users').get();
+  if (usersSnap.empty) return;
+
+  // Query predictions for this GW
+  const fixtureIds = gwFixtures.map(f => f.id);
+  const predsSnap = await db.collection('predictions').get();
+  const userPredCount = {};
+  predsSnap.forEach(d => {
+    const p = d.data();
+    if (fixtureIds.includes(String(p.fixtureId))) {
+      userPredCount[p.uid] = (userPredCount[p.uid] || 0) + 1;
+    }
+  });
+
+  // Query GW Extras for this GW
+  const extrasSnap = await db.collection('gwExtraPredictions').where('gameweek', '==', targetGW).get();
+  const userHasExtras = new Set();
+  extrasSnap.forEach(d => {
+    const e = d.data();
+    if (e.uid) userHasExtras.add(e.uid);
+  });
+
+  const totalMatches = gwFixtures.length;
+  let sentCount = 0;
+
+  const firstKickoffDateStr = new Date(firstKickoffMs).toUTCString();
+  const appUrl = 'https://somnathpatracbsa.github.io/EPL/';
+
+  for (const uDoc of usersSnap.docs) {
+    const user = uDoc.data();
+    const uid = uDoc.id;
+    const email = user.email;
+    if (!email || !email.includes('@')) continue;
+
+    const count = userPredCount[uid] || 0;
+    const hasExtras = userHasExtras.has(uid);
+    const missingMatches = totalMatches - count;
+    const isMissing = missingMatches > 0 || !hasExtras;
+
+    if (!isMissing) continue; // Player has filled everything!
+
+    const displayName = user.displayName || 'Champion';
+    const missingDetails = [];
+    if (missingMatches > 0) missingDetails.push(`<strong>${missingMatches} of ${totalMatches}</strong> match scorelines`);
+    if (!hasExtras) missingDetails.push(`<strong>Gameweek Extras</strong> (Top Scorer Team, Clean Sheet, etc.)`);
+
+    const fixtureListHtml = gwFixtures.map(f => `
+      <tr style="border-bottom: 1px solid #24382e;">
+        <td style="padding: 8px 6px; font-weight: 600; text-align: right; color: #ffffff;">${f.homeTeam}</td>
+        <td style="padding: 8px 6px; font-family: monospace; font-size: 11px; color: #4cbf7a; text-align: center;">vs</td>
+        <td style="padding: 8px 6px; font-weight: 600; text-align: left; color: #ffffff;">${f.awayTeam}</td>
+        <td style="padding: 8px 6px; font-size: 11px; color: #8fa89b; text-align: right;">${new Date(f.kickoffUTC).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC</td>
+      </tr>
+    `).join('');
+
+    const emailHtml = `
+      <div style="background-color: #0c1611; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #eaf2ed; padding: 28px 20px; max-width: 580px; margin: 0 auto; border-radius: 12px; border: 1px solid #1f382a;">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <span style="font-size: 32px;">⏰</span>
+          <h1 style="color: #4cbf7a; font-size: 22px; margin: 8px 0 4px; letter-spacing: 0.5px;">Gameweek ${targetGW} Kickoff in ${Math.round(diffHours)} Hours!</h1>
+          <p style="color: #8fa89b; font-size: 13px; margin: 0;">Premier League Prediction League</p>
+        </div>
+
+        <div style="background: rgba(230, 69, 69, 0.12); border: 1px solid rgba(230, 69, 69, 0.4); border-radius: 8px; padding: 14px 16px; margin-bottom: 20px;">
+          <div style="color: #ff8b8b; font-weight: 700; font-size: 14px; margin-bottom: 4px;">⚠️ Action Required: Missing Predictions</div>
+          <div style="font-size: 13px; color: #eaf2ed; line-height: 1.5;">
+            Hey <strong>${displayName}</strong>, you still have incomplete predictions for Gameweek ${targetGW}:
+            <ul style="margin: 6px 0 0 16px; padding: 0;">
+              ${missingDetails.map(d => `<li>${d}</li>`).join('')}
+            </ul>
+          </div>
+        </div>
+
+        <div style="background: #14241c; border-radius: 8px; padding: 16px; margin-bottom: 22px; border: 1px solid #1f382a;">
+          <div style="font-size: 12px; font-weight: 700; color: #ffb627; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;">
+            📅 Gameweek ${targetGW} Fixtures
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <tbody>
+              ${fixtureListHtml}
+            </tbody>
+          </table>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 20px;">
+          <a href="${appUrl}" style="display: inline-block; background: linear-gradient(135deg, #4cbf7a 0%, #2f8e54 100%); color: #0c1611; font-weight: 800; font-size: 15px; padding: 12px 28px; border-radius: 6px; text-decoration: none; box-shadow: 0 4px 14px rgba(76, 191, 122, 0.35);">
+            🎯 Lock In Your Predictions
+          </a>
+        </div>
+
+        <div style="text-align: center; font-size: 11px; color: #6b8778; border-top: 1px solid #1f382a; padding-top: 14px;">
+          Matches lock individually the moment each match kicks off. Good luck!
+        </div>
+      </div>
+    `;
+
+    await sendResendEmail({
+      to: email,
+      subject: `⏰ 24h Reminder: Complete your GW ${targetGW} Predictions!`,
+      html: emailHtml
+    });
+    sentCount++;
+    await sleep(250); // Be respectful of rate limits
+  }
+
+  // Record that reminder was sent for this GW
+  await db.collection('config').doc('current').set({
+    gwRemindersSent: {
+      ...remindersSent,
+      [targetGW]: admin.firestore.FieldValue.serverTimestamp()
+    }
+  }, { merge: true });
+
+  console.log(`Sent 24h Gameweek ${targetGW} reminder emails to ${sentCount} player(s).`);
+}
+
 // ---------- Main ----------
 async function main() {
   const matches = await syncFixtures();
@@ -617,6 +861,14 @@ async function main() {
     kickoffUTC: m.utcDate, status: m.status,
     homeScore: m.score.fullTime.home, awayScore: m.score.fullTime.away
   }));
+
+  // Process any pending confirmation emails in mailQueue
+  try { await processMailQueue(); }
+  catch (err) { console.error('processMailQueue failed:', err.message); }
+
+  // Check and send 24h reminders for upcoming kickoff
+  try { await checkAndSend24hGwReminders(fixturesInMemory); }
+  catch (err) { console.error('checkAndSend24hGwReminders failed:', err.message); }
 
   // RELIABILITY FIX: these used to run as one unguarded sequence — if an earlier step threw
   // (e.g. a transient Firestore read failure), everything after it silently never ran, including
